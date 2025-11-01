@@ -10,8 +10,8 @@ The goal of this project is to create a MVP to explore the feasibility of using 
 
 - [ ] Basic FastAPI server setup
 - [ ] Integrate ZhipuAI APIs
+    - [x] LLM (Large Language Model)
     - [ ] ASR (Automatic Speech Recognition)
-    - [ ] LLM (Large Language Model)
     - [ ] TTS (Text-to-Speech)
 - [ ] Define API endpoints
 - [ ] Connect to frontend
