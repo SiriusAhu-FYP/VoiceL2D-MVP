@@ -113,6 +113,12 @@ wheels = [
 ]
 
 [[package]]
+name = "simpleaudio"
+version = "1.0.4"
+source = { registry = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple" }
+sdist = { url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/94/1b/4dc29653733202b68c09d9c6ca085cf67ac54859ee860647ef21ac1ff3dc/simpleaudio-1.0.4.tar.gz", hash = "sha256:691c88649243544db717e7edf6a9831df112104e1aefb5f6038a5d071e8cf41d", size = 2042564, upload-time = "2019-11-29T03:56:28.965Z" }
+
+[[package]]
 name = "urllib3"
 version = "2.5.0"
 source = { registry = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple" }
@@ -128,10 +134,12 @@ source = { virtual = "." }
 dependencies = [
     { name = "dotenv" },
     { name = "requests" },
+    { name = "simpleaudio" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "dotenv", specifier = ">=0.9.9" },
     { name = "requests", specifier = ">=2.32.5" },
+    { name = "simpleaudio", specifier = ">=1.0.4" },
 ]
