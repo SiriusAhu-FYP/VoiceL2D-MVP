@@ -1,7 +1,8 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import * as PIXI from 'pixi.js';
 import { Live2DModel } from 'pixi-live2d-display/cubism4';
 import { startUpCubism4, cubism4Ready } from 'pixi-live2d-display/cubism4';
+import { ActionPanel } from './ActionPanel';
 
 //  hack: 告诉插件 PIXI 实例在哪里
 (window as any).PIXI = PIXI;
@@ -35,7 +36,73 @@ const waitForLive2DCore = (): Promise<void> => {
 export const Live2DComponent: React.FC = () => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const appRef = useRef<PIXI.Application | null>(null);
+    const modelRef = useRef<Live2DModel | null>(null);
     const resizeHandlerRef = useRef<(() => void) | null>(null);
+    const [currentModel, setCurrentModel] = useState<string>('Mao');
+    const audioRef = useRef<HTMLAudioElement | null>(null);
+
+    // 播放动作的函数
+    const handlePlayAction = (action: string, sound?: string) => {
+        if (!modelRef.current) {
+            console.warn('Model not loaded yet');
+            return;
+        }
+
+        // 播放动作 - 修正动作组名称格式
+        // action可能是 "TapBody" 或 "Tap@Body"，需要转换为 "TapBody"
+        let motionGroup = action;
+        if (motionGroup.includes('@')) {
+            motionGroup = motionGroup.replace('@', '');
+        }
+
+        modelRef.current.motion(motionGroup, undefined, 3).catch((err) => {
+            console.error('Failed to play motion:', err);
+        });
+
+        // 播放声音（如果有）
+        if (sound) {
+            // 停止之前的音频
+            if (audioRef.current) {
+                audioRef.current.pause();
+                audioRef.current.currentTime = 0;
+            }
+
+            // 创建新的音频
+            const audio = new Audio(`/Resources/${currentModel}/${sound}`);
+            audioRef.current = audio;
+            audio.play().catch((err) => {
+                console.error('Failed to play sound:', err);
+            });
+        }
+    };
+
+    // 播放表情的函数
+    const handlePlayExpression = (expression: string) => {
+        if (!modelRef.current) {
+            console.warn('Model not loaded yet');
+            return;
+        }
+
+        modelRef.current.expression(expression).catch((err) => {
+            console.error('Failed to play expression:', err);
+        });
+    };
+
+    // 播放声音的函数
+    const handlePlaySound = (sound: string) => {
+        // 停止之前的音频
+        if (audioRef.current) {
+            audioRef.current.pause();
+            audioRef.current.currentTime = 0;
+        }
+
+        // 创建新的音频
+        const audio = new Audio(`/Resources/${currentModel}/${sound}`);
+        audioRef.current = audio;
+        audio.play().catch((err) => {
+            console.error('Failed to play sound:', err);
+        });
+    };
 
     useEffect(() => {
         // 立即检查 canvas 是否存在
@@ -88,8 +155,17 @@ export const Live2DComponent: React.FC = () => {
 
                 // 5. 加载模型
                 console.log('开始加载 Live2D 模型...');
-                const model = await Live2DModel.from('/Resources/Haru/Haru.model3.json');
+                const modelPath = '/Resources/Mao/Mao.model3.json';
+                const model = await Live2DModel.from(modelPath);
                 console.log('Live2D 模型加载成功');
+
+                modelRef.current = model;
+
+                // 提取模型名称
+                const modelNameMatch = modelPath.match(/\/Resources\/([^\/]+)\//);
+                if (modelNameMatch) {
+                    setCurrentModel(modelNameMatch[1]);
+                }
 
                 app.stage.addChild(model as any);
 
@@ -107,7 +183,7 @@ export const Live2DComponent: React.FC = () => {
                 model.on('pointerdown', (event: any) => {
                     const hitAreas = model.hitTest(event.data.global.x, event.data.global.y);
                     if (hitAreas.includes('Body')) {
-                        model.motion('Tap@Body', undefined, 3);
+                        model.motion('TapBody', undefined, 3);
                     }
                 });
 
@@ -149,6 +225,11 @@ export const Live2DComponent: React.FC = () => {
 
         // 组件卸载时的 cleanup
         return () => {
+            // 停止音频
+            if (audioRef.current) {
+                audioRef.current.pause();
+                audioRef.current = null;
+            }
             // 移除 resize 事件监听器
             if (resizeHandlerRef.current) {
                 window.removeEventListener('resize', resizeHandlerRef.current);
@@ -162,10 +243,40 @@ export const Live2DComponent: React.FC = () => {
         };
     }, []); // 空依赖数组，确保只运行一次
 
+    // 设置全局回调供API使用（在组件挂载后）
+    useEffect(() => {
+        if (modelRef.current) {
+            // 延迟设置，确保modelRef已经设置
+            setTimeout(() => {
+                if ((window as any).__live2dSetCallbacks) {
+                    (window as any).__live2dSetCallbacks(
+                        (action: string, sound?: string) => {
+                            handlePlayAction(action, sound);
+                        },
+                        (expression: string) => {
+                            handlePlayExpression(expression);
+                        },
+                        (sound: string) => {
+                            handlePlaySound(sound);
+                        }
+                    );
+                }
+            }, 1000);
+        }
+    }, [currentModel]);
+
     return (
-        <canvas
-            ref={canvasRef}
-            style={{ width: '100vw', height: '100vh' }} // 确保 canvas 占满屏幕
-        />
+        <>
+            <canvas
+                ref={canvasRef}
+                style={{ width: '100vw', height: '100vh' }} // 确保 canvas 占满屏幕
+            />
+            <ActionPanel
+                currentModel={currentModel}
+                onPlayAction={handlePlayAction}
+                onPlayExpression={handlePlayExpression}
+                onPlaySound={handlePlaySound}
+            />
+        </>
     );
 };
