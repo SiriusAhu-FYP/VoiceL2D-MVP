@@ -158,6 +158,83 @@
 }
 `
 
+### 7. 按索引播放动作
+
+**POST** /api/live2d/motion/index
+
+根据动作列表索引播放对应动作，并自动广播 SSE 事件。
+
+**请求体：**
+`json
+{
+  "index": 0
+}
+`
+
+**响应示例：**
+`json
+{
+  "success": true,
+  "data": {
+    "group": "TapBody",
+    "name": "TapBody_0",
+    "file": "motions/haru_g_m01.motion3.json",
+    "sound": "sounds/haru_talk_13.wav"
+  }
+}
+`
+
+### 8. 随机动作
+
+**POST** /api/live2d/random/motion
+
+随机返回一个与上次不同的动作，并触发播放。
+
+### 9. 随机表情
+
+**POST** /api/live2d/random/expression
+
+随机返回一个与上次不同的表情，并触发播放。
+
+### 10. 随机声音
+
+**POST** /api/live2d/random/sound
+
+随机返回一个与上次不同的声音，并触发播放。
+
+### 11. 随机组合
+
+**POST** /api/live2d/random/combo
+
+一次性随机触发“动作 + 表情 + 声音”组合，确保与上次组合不同。
+
+### 12. 资源合法性校验
+
+**POST** /api/live2d/validate
+
+校验指定动作/表情/声音是否存在于当前模型。
+
+**请求体：**
+`json
+{
+  "type": "expression",
+  "value": "F01"
+}
+`
+
+**响应示例：**
+`json
+{
+  "success": true,
+  "data": {
+    "type": "expression",
+    "value": "F01",
+    "valid": true
+  }
+}
+`
+
+
 ## 使用示例
 
 ### cURL 示例
@@ -193,7 +270,18 @@ curl http://localhost:7788/api/live2d/state
 curl -X POST http://localhost:7788/api/live2d/state \
   -H "Content-Type: application/json" \
   -d '{"currentModel": "Haru"}'
-```
+``
+# 随机动作
+curl -X POST http://localhost:7788/api/live2d/random/motion
+
+# 随机组合
+curl -X POST http://localhost:7788/api/live2d/random/combo
+
+# 资源校验
+curl -X POST http://localhost:7788/api/live2d/validate \
+  -H "Content-Type: application/json" \
+  -d '{"type": "expression", "value": "F01"}'
+`
 
 ### JavaScript 示例
 
@@ -244,6 +332,21 @@ await fetch('/api/live2d/state', {
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ currentModel: 'Haru' })
 });
+
+// 随机动作
+await fetch('/api/live2d/random/motion', { method: 'POST' });
+
+// 随机组合
+await fetch('/api/live2d/random/combo', { method: 'POST' });
+
+// 资源校验
+const validateResponse = await fetch('/api/live2d/validate', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ type: 'expression', value: 'F01' })
+});
+const validateResult = await validateResponse.json();
+console.log(validateResult.data.valid);
 ```
 
 ## 前端界面

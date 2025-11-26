@@ -1,0 +1,183 @@
+"""Lightweight MCP server that proxies Live2D frontend utilities."""
+
+from typing import Any, Dict, Optional
+
+import requests
+from fastmcp import FastMCP
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import JSONResponse, Response
+
+mcp = FastMCP("Voice2D MVP MCP Server")
+frontend_url = "http://localhost:7788"
+
+
+class AcceptHeaderFriendlyMiddleware(BaseHTTPMiddleware):
+    """
+    Provide a helpful hint when clients call /mcp without the SSE header.
+    The MCP spec requires `Accept: text/event-stream`.
+    """
+
+    async def dispatch(self, request: Request, call_next) -> Response:
+        if request.method == "GET" and request.url.path == "/mcp":
+            accept = request.headers.get("accept", "")
+            if "text/event-stream" not in accept.lower():
+                return JSONResponse({
+                    "error": "This endpoint streams MCP events.",
+                    "hint": 'Call with header: Accept: text/event-stream (e.g. curl -H "Accept: text/event-stream" http://localhost:8848/mcp).',
+                })
+        return await call_next(request)
+
+
+def _handle_response(response: requests.Response) -> Optional[Dict[str, Any]]:
+    try:
+        response.raise_for_status()
+        return response.json()
+    except requests.RequestException as exc:
+        print(f"[MCP] Request failed: {exc}")
+        return None
+
+
+def _get(path: str) -> Optional[Dict[str, Any]]:
+    try:
+        response = requests.get(f"{frontend_url}{path}", timeout=5)
+        return _handle_response(response)
+    except requests.RequestException as exc:
+        print(f"[MCP] GET {path} error: {exc}")
+        return None
+
+
+def _post(path: str, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    try:
+        response = requests.post(f"{frontend_url}{path}", json=payload, timeout=5)
+        return _handle_response(response)
+    except requests.RequestException as exc:
+        print(f"[MCP] POST {path} error: {exc}")
+        return None
+
+
+@mcp.tool
+def refresh_data():
+    """
+    Fetch the current model state summary.
+
+    Returns the active model name, total counts of motions/expressions/sounds,
+    and hints if the frontend server is offline.
+    """
+    payload = _get("/api/live2d/state")
+    if not payload or not payload.get("success"):
+        return (
+            "Unable to query the frontend state. Please ensure `pnpm dev` is running."
+        )
+
+    data = payload.get("data") or {}
+    current_model = data.get("currentModel")
+    actions = data.get("availableActions") or {}
+    return (
+        f"Current model: {current_model or 'unknown'} | "
+        f"motions={len(actions.get('motions') or [])}, "
+        f"expressions={len(actions.get('expressions') or [])}, "
+        f"sounds={len(actions.get('sounds') or [])}"
+    )
+
+
+@mcp.tool
+def play_motion(motion_index: int):
+    """
+    Ask the frontend to play a specific motion by index.
+
+    Frontend validation ensures the index is safe and broadcasts the action via
+    SSE so every connected client stays in sync.
+    """
+    if motion_index < 0:
+        return "Motion index must be a non-negative integer."
+
+    payload = _post("/api/live2d/motion/index", {"index": motion_index})
+    if not payload:
+        return "Failed to contact the frontend."
+    if not payload.get("success"):
+        return payload.get("error", "Failed to play the requested motion.")
+
+    motion = payload.get("data") or {}
+    return f"Playing motion: {motion.get('group') or motion.get('name')}"
+
+
+@mcp.tool
+def play_random_motion():
+    """
+    Trigger the frontend's random-motion helper.
+
+    The frontend guarantees the motion differs from the previous one, performs
+    validation, and broadcasts the result through SSE.
+    """
+    payload = _post("/api/live2d/random/motion", {})
+    if not payload:
+        return "Failed to contact the frontend."
+    if not payload.get("success"):
+        return payload.get("error", "Random motion failed.")
+
+    motion = payload.get("data") or {}
+    return f"Random motion: {motion.get('group') or motion.get('name')}"
+
+
+@mcp.tool
+def play_random_expression():
+    """
+    Trigger the frontend's random-expression helper.
+
+    Ensures the selected expression is valid for the current model and avoids
+    repeating the last expression.
+    """
+    payload = _post("/api/live2d/random/expression", {})
+    if not payload:
+        return "Failed to contact the frontend."
+    if not payload.get("success"):
+        return payload.get("error", "Random expression failed.")
+
+    expression = payload.get("data") or {}
+    return f"Random expression: {expression.get('name')}"
+
+
+@mcp.tool
+def play_random_sound():
+    """
+    Trigger the frontend's random sound helper.
+
+    Useful for quickly testing available TTS/audio assets.
+    """
+    payload = _post("/api/live2d/random/sound", {})
+    if not payload:
+        return "Failed to contact the frontend."
+    if not payload.get("success"):
+        return payload.get("error", "Random sound failed.")
+
+    data = payload.get("data") or {}
+    return f"Random sound: {data.get('sound')}"
+
+
+@mcp.tool
+def play_random_combo():
+    """
+    Trigger a random motion + expression + sound combo.
+
+    The frontend enforces uniqueness and returns details about the chosen
+    resources for logging or debugging.
+    """
+    payload = _post("/api/live2d/random/combo", {})
+    if not payload:
+        return "Failed to contact the frontend."
+    if not payload.get("success"):
+        return payload.get("error", "Random combo failed.")
+
+    data = payload.get("data") or {}
+    motion = data.get("motion") or {}
+    expression = data.get("expression") or {}
+    sound = data.get("sound")
+    return (
+        f"Random combo -> motion: {motion.get('group')}, "
+        f"expression: {expression.get('name')}, sound: {sound}"
+    )
+
+
+if __name__ == "__main__":
+    mcp.run(transport="http", port=8848)  # TODO: Make port configurable

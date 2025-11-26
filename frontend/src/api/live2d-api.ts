@@ -26,6 +26,12 @@ export interface ResourcesData {
     actions: Record<string, ModelActions>;
 }
 
+export interface RandomComboData {
+    motion: MotionInfo;
+    expression: ExpressionInfo;
+    sound: string;
+}
+
 export interface CurrentModelState {
     currentModel: string | null;
     availableActions: ModelActions | null;
@@ -133,6 +139,84 @@ export async function updateCurrentModelState(modelName: string): Promise<boolea
         return result.success === true;
     } catch (error) {
         console.error('Failed to update current model state:', error);
+        return false;
+    }
+}
+
+export async function playMotionByIndex(index: number): Promise<MotionInfo | null> {
+    try {
+        const response = await fetch(`${API_BASE}/motion/index`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ index }),
+        });
+        const result = await response.json();
+        return result.success ? (result.data as MotionInfo) : null;
+    } catch (error) {
+        console.error('Failed to play motion by index:', error);
+        return null;
+    }
+}
+
+export async function requestRandomMotion(): Promise<MotionInfo | null> {
+    try {
+        const response = await fetch(`${API_BASE}/random/motion`, { method: 'POST' });
+        const result = await response.json();
+        return result.success ? (result.data as MotionInfo) : null;
+    } catch (error) {
+        console.error('Failed to request random motion:', error);
+        return null;
+    }
+}
+
+export async function requestRandomExpression(): Promise<ExpressionInfo | null> {
+    try {
+        const response = await fetch(`${API_BASE}/random/expression`, { method: 'POST' });
+        const result = await response.json();
+        return result.success ? (result.data as ExpressionInfo) : null;
+    } catch (error) {
+        console.error('Failed to request random expression:', error);
+        return null;
+    }
+}
+
+export async function requestRandomSound(): Promise<string | null> {
+    try {
+        const response = await fetch(`${API_BASE}/random/sound`, { method: 'POST' });
+        const result = await response.json();
+        return result.success ? (result.data?.sound as string) : null;
+    } catch (error) {
+        console.error('Failed to request random sound:', error);
+        return null;
+    }
+}
+
+export async function requestRandomCombo(): Promise<RandomComboData | null> {
+    try {
+        const response = await fetch(`${API_BASE}/random/combo`, { method: 'POST' });
+        const result = await response.json();
+        return result.success ? (result.data as RandomComboData) : null;
+    } catch (error) {
+        console.error('Failed to request random combo:', error);
+        return null;
+    }
+}
+
+export async function validateResource(type: 'motion' | 'expression' | 'sound', value: string): Promise<boolean> {
+    try {
+        const response = await fetch(`${API_BASE}/validate`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ type, value }),
+        });
+        const result = await response.json();
+        return result.success ? Boolean(result.data?.valid) : false;
+    } catch (error) {
+        console.error('Failed to validate resource:', error);
         return false;
     }
 }
