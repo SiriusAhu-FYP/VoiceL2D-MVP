@@ -26,6 +26,13 @@ export interface ResourcesData {
     actions: Record<string, ModelActions>;
 }
 
+export interface CurrentModelState {
+    currentModel: string | null;
+    availableActions: ModelActions | null;
+    models: string[];
+    updatedAt: string | null;
+}
+
 const API_BASE = '/api/live2d';
 
 // 获取所有动作列表
@@ -93,6 +100,39 @@ export async function playSound(sound: string): Promise<boolean> {
         return result.success === true;
     } catch (error) {
         console.error('Failed to play sound:', error);
+        return false;
+    }
+}
+
+// 获取当前模型状态
+export async function getCurrentModelState(): Promise<CurrentModelState | null> {
+    try {
+        const response = await fetch(`${API_BASE}/state`);
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        const result = await response.json();
+        return result.success ? result.data : null;
+    } catch (error) {
+        console.error('Failed to fetch current model state:', error);
+        return null;
+    }
+}
+
+// 更新当前模型状态
+export async function updateCurrentModelState(modelName: string): Promise<boolean> {
+    try {
+        const response = await fetch(`${API_BASE}/state`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ currentModel: modelName }),
+        });
+        const result = await response.json();
+        return result.success === true;
+    } catch (error) {
+        console.error('Failed to update current model state:', error);
         return false;
     }
 }

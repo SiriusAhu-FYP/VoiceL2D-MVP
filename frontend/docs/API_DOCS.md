@@ -112,7 +112,51 @@
 }
 ```
 
-**注意：** 声音文件路径相对于模型文件夹（如 `sounds/haru_talk_13.wav` 对应 `/Resources/Haru/sounds/haru_talk_13.wav`）
+**注意：** 声音文件路径相对于模型文件夹（如 sounds/haru_talk_13.wav 对应 /Resources/Haru/sounds/haru_talk_13.wav）
+
+### 5. 获取当前模型状态
+
+**GET** /api/live2d/state
+
+返回保存在前端服务侧的当前模型信息，包括当前角色名、所有可用模型以及该角色的动作/表情/音频资源。
+
+**响应示例**
+`json
+{
+  "success": true,
+  "data": {
+    "currentModel": "Haru",
+    "models": ["Mao", "Haru", "Hiyori"],
+    "availableActions": {
+      "motions": [],
+      "expressions": [],
+      "sounds": []
+    },
+    "updatedAt": "2025-11-26T15:57:00.000Z"
+  }
+}
+`
+
+### 6. 更新当前模型状态
+
+**POST** /api/live2d/state
+
+用于由前端 UI 将最新的模型选择状态同步给其他客户端或脚本，方便外部实时查询。
+
+**请求体：**
+`json
+{
+  "currentModel": "Haru"
+}
+`
+
+**响应示例**
+`json
+{
+  "success": true,
+  "message": "Current model updated"
+}
+`
 
 ## 使用示例
 
@@ -141,6 +185,14 @@ curl -X POST http://localhost:7788/api/live2d/expression \
 curl -X POST http://localhost:7788/api/live2d/sound \
   -H "Content-Type: application/json" \
   -d '{"sound": "sounds/haru_talk_13.wav"}'
+
+# 获取当前模型状态
+curl http://localhost:7788/api/live2d/state
+
+# 更新当前模型
+curl -X POST http://localhost:7788/api/live2d/state \
+  -H "Content-Type: application/json" \
+  -d '{"currentModel": "Haru"}'
 ```
 
 ### JavaScript 示例
@@ -180,6 +232,17 @@ await fetch('/api/live2d/sound', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ sound: 'sounds/haru_talk_13.wav' })
+});
+// 获取当前模型状态
+const stateResponse = await fetch('/api/live2d/state');
+const state = await stateResponse.json();
+console.log(state.data.currentModel);
+
+// 更新当前模型状态
+await fetch('/api/live2d/state', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ currentModel: 'Haru' })
 });
 ```
 

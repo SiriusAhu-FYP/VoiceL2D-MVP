@@ -4,6 +4,7 @@ import { Live2DModel } from 'pixi-live2d-display/cubism4';
 import { startUpCubism4, cubism4Ready } from 'pixi-live2d-display/cubism4';
 import { ActionPanel } from './ActionPanel';
 import { VersionBadge } from './VersionBadge';
+import { updateCurrentModelState } from '../api/live2d-api';
 
 type Live2DCubismCoreGlobal = {
     LogLevel_Verbose?: number;
@@ -53,6 +54,8 @@ export const Live2DComponent: React.FC = () => {
     const modelRef = useRef<Live2DModel | null>(null);
     const resizeHandlerRef = useRef<(() => void) | null>(null);
     const eventSourceRef = useRef<EventSource | null>(null);
+    const idleRestoreRef = useRef<(() => void) | null>(null);
+    const activeModelNameRef = useRef<string | null>(null);
     const noopAction: SSECallbacks['playAction'] = (action, sound) => {
         void action;
         void sound;
@@ -68,7 +71,7 @@ export const Live2DComponent: React.FC = () => {
         playExpression: noopExpression,
         playSound: noopSound,
     });
-    const [currentModel, setCurrentModel] = useState<string>('Mao');
+    const [currentModel, setCurrentModel] = useState<string>('');
     const audioRef = useRef<HTMLAudioElement | null>(null);
 
     const handlePlayAction = useCallback((action: string, sound?: string) => {
@@ -91,8 +94,12 @@ export const Live2DComponent: React.FC = () => {
                 audioRef.current.pause();
                 audioRef.current.currentTime = 0;
             }
-
-            const audio = new Audio(`/Resources/${currentModel}/${sound}`);
+            const modelNameForAssets = activeModelNameRef.current || currentModel;
+            if (!modelNameForAssets) {
+                console.warn('Cannot resolve model name for audio playback yet');
+                return;
+            }
+            const audio = new Audio(`/Resources/${modelNameForAssets}/${sound}`);
             audioRef.current = audio;
             audio.play().catch((err) => {
                 console.error('Failed to play sound:', err);
@@ -117,7 +124,12 @@ export const Live2DComponent: React.FC = () => {
             audioRef.current.currentTime = 0;
         }
 
-        const audio = new Audio(`/Resources/${currentModel}/${sound}`);
+        const modelNameForAssets = activeModelNameRef.current || currentModel;
+        if (!modelNameForAssets) {
+            console.warn('Cannot resolve model name for audio playback yet');
+            return;
+        }
+        const audio = new Audio(`/Resources/${modelNameForAssets}/${sound}`);
         audioRef.current = audio;
         audio.play().catch((err) => {
             console.error('Failed to play sound:', err);
@@ -172,7 +184,21 @@ export const Live2DComponent: React.FC = () => {
 
                 const modelNameMatch = modelPath.match(/\/Resources\/([^/]+)\//);
                 if (modelNameMatch) {
-                    setCurrentModel(modelNameMatch[1]);
+                    const resolvedModelName = modelNameMatch[1];
+                    activeModelNameRef.current = resolvedModelName;
+                    setCurrentModel(resolvedModelName);
+                }
+
+                const internalModel = model.internalModel as typeof model.internalModel | undefined;
+                const motionManager = internalModel?.motionManager;
+                if (motionManager?.state) {
+                    motionManager.stopAllMotions();
+                    motionManager.state.setReservedIdle?.(undefined, undefined);
+                    const originalShouldRequestIdleMotion = motionManager.state.shouldRequestIdleMotion.bind(motionManager.state);
+                    motionManager.state.shouldRequestIdleMotion = () => false;
+                    idleRestoreRef.current = () => {
+                        motionManager.state.shouldRequestIdleMotion = originalShouldRequestIdleMotion;
+                    };
                 }
 
                 app.stage.addChild(model as unknown as PIXI.DisplayObject);
@@ -229,8 +255,22 @@ export const Live2DComponent: React.FC = () => {
                 appRef.current.destroy(true);
                 appRef.current = null;
             }
+
+            if (idleRestoreRef.current) {
+                idleRestoreRef.current();
+                idleRestoreRef.current = null;
+            }
         };
     }, []);
+
+    useEffect(() => {
+        if (!currentModel) {
+            return;
+        }
+        updateCurrentModelState(currentModel).catch((error) => {
+            console.error('Failed to sync current model state', error);
+        });
+    }, [currentModel]);
 
     useEffect(() => {
         if (!import.meta.env.DEV) {

@@ -30,6 +30,8 @@ export default defineConfig({
       name: 'live2d-api',
       configureServer(server) {
         const sseClients = new Set<ServerResponse>();
+        let currentModelName: string | null = null;
+        let lastModelUpdateAt: number | null = null;
 
         const broadcastEvent = (eventType: string, payload: Record<string, unknown>) => {
           const data = `event: ${eventType}\ndata: ${JSON.stringify(payload)}\n\n`;
@@ -125,6 +127,14 @@ export default defineConfig({
           return result;
         }
 
+        function ensureCurrentModel(models: string[]): string | null {
+          if (currentModelName && models.includes(currentModelName)) {
+            return currentModelName;
+          }
+          currentModelName = models[0] ?? null;
+          return currentModelName;
+        }
+
         // API中间件 - 必须在其他中间件之前
         server.middlewares.use((req, res, next) => {
           const url = req.url || '';
@@ -164,6 +174,26 @@ export default defineConfig({
             res.setHeader('Access-Control-Allow-Origin', '*');
             const data = scanResources();
             res.end(JSON.stringify({ success: true, data }));
+            return;
+          }
+
+          // GET /api/live2d/state
+          if (req.method === 'GET' && pathname === '/api/live2d/state') {
+            console.log('[Live2D API] GET /api/live2d/state');
+            res.setHeader('Content-Type', 'application/json');
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            const data = scanResources();
+            const resolvedModel = ensureCurrentModel(data.models);
+            const availableActions = resolvedModel ? data.actions[resolvedModel] ?? null : null;
+            res.end(JSON.stringify({
+              success: true,
+              data: {
+                currentModel: resolvedModel,
+                availableActions,
+                models: data.models,
+                updatedAt: lastModelUpdateAt ? new Date(lastModelUpdateAt).toISOString() : null,
+              },
+            }));
             return;
           }
 
@@ -220,6 +250,30 @@ export default defineConfig({
                 res.end(JSON.stringify({ success: true, message: `Playing sound: ${sound}` }));
               } catch (error) {
                 console.error('[Live2D API] Invalid sound payload', error);
+                res.statusCode = 400;
+                res.end(JSON.stringify({ success: false, error: 'Invalid request' }));
+              }
+            });
+            return;
+          }
+
+          // POST /api/live2d/state
+          if (req.method === 'POST' && pathname === '/api/live2d/state') {
+            let body = '';
+            req.on('data', chunk => { body += chunk.toString(); });
+            req.on('end', () => {
+              try {
+                const payload = JSON.parse(body) as { currentModel?: unknown };
+                if (typeof payload.currentModel !== 'string' || payload.currentModel.trim() === '') {
+                  throw new Error('Invalid currentModel');
+                }
+                currentModelName = payload.currentModel.trim();
+                lastModelUpdateAt = Date.now();
+                res.setHeader('Content-Type', 'application/json');
+                res.setHeader('Access-Control-Allow-Origin', '*');
+                res.end(JSON.stringify({ success: true, message: 'Current model updated' }));
+              } catch (error) {
+                console.error('[Live2D API] Invalid state payload', error);
                 res.statusCode = 400;
                 res.end(JSON.stringify({ success: false, error: 'Invalid request' }));
               }

@@ -390,6 +390,40 @@ node test_api.js sound
 }
 ```
 
+
+### GET /api/live2d/state
+
+��ȡ��ǰǰ�˷�������ݵ�ģ��״̬�����У���ܰ�����ǰ��ɫ���ƣ��ɿ��õĶ��������顢����ζԴ���б����Լ����г��õ�ģ�͡�
+
+**��Ӧ��ʽ��**
+`json
+{
+  "success": true,
+  "data": {
+    "currentModel": "Haru",
+    "models": ["Mao", "Haru", "Hiyori"],
+    "availableActions": {
+      "motions": [],
+      "expressions": [],
+      "sounds": []
+    },
+    "updatedAt": "2025-11-26T15:57:00.000Z"
+  }
+}
+`
+
+### POST /api/live2d/state
+
+ͨ��ǰ�˻���UI��������ǰ����ʾ��ģ��״̬�������ڲ��������ͻ��ˣ���ʱ��ȡͬһ����Ϣ��
+
+**�����壺**
+`json
+{
+  "currentModel": "Haru"
+}
+`
+
+
 ---
 
 ## 常见问题
