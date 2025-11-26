@@ -30,7 +30,7 @@ If first time using, make sure to install dependencies first:
 
 ### Backend
 
-- [x] Basic FastAPI server setup
+- [x] Basic FastMCP server setup
 - [x] Integrate ZhipuAI APIs
     - [x] LLM (Large Language Model)
     - [x] ASR (Automatic Speech Recognition)
