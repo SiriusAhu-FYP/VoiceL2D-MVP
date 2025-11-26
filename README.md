@@ -8,21 +8,21 @@ The goal of this project is to create a MVP to explore the feasibility of using 
 
 ### Backend
 
-- [ ] Basic FastAPI server setup
+- [x] Basic FastAPI server setup
 - [x] Integrate ZhipuAI APIs
     - [x] LLM (Large Language Model)
     - [x] ASR (Automatic Speech Recognition)
     - [x] TTS (Text-to-Speech)
-- [ ] Define API endpoints
-- [ ] Connect to frontend
+- [x] Define API endpoints
+- [x] Connect to frontend
 
 ### Frontend
 - [ ] Connection to backend API
-    - [ ] A simple UI layout
+    - [x] A simple UI layout
     - [ ] A display area for text responses received from the backend
     - [ ] Connection to play audio responses received from the backend
     - [ ] Avalidation of voice input recording and sending to backend
-- [ ] `Cubism` model integration
+- [x] `Cubism` model integration
 
 ### Advanced
 - [ ] Define commands to control Live2D model
