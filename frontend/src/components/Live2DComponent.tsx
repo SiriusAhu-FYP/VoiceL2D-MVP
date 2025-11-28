@@ -3,7 +3,6 @@ import * as PIXI from 'pixi.js';
 import { Live2DModel } from 'pixi-live2d-display/cubism4';
 import { startUpCubism4, cubism4Ready } from 'pixi-live2d-display/cubism4';
 import { ActionPanel } from './ActionPanel';
-import { VersionBadge } from './VersionBadge';
 import { updateCurrentModelState } from '../api/live2d-api';
 
 type Live2DCubismCoreGlobal = {
@@ -441,7 +440,6 @@ export const Live2DComponent: React.FC = () => {
 
     return (
         <>
-            <VersionBadge />
             <canvas
                 ref={canvasRef}
                 style={{ width: '100vw', height: '100vh' }}
