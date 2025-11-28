@@ -1,0 +1,19 @@
+Place commercial Live2D model folders here.
+
+Each model folder should contain:
+- A .model3.json file with the same name as the folder
+- .moc3, .physics3.json, and other required Live2D files
+- Motion files (*.motion3.json) directly in the model folder or in a motions/ subfolder
+- Expression files (*.exp3.json) directly in the model folder or in an expressions/ subfolder
+- Sound files (*.wav, *.mp3, *.ogg) directly in the model folder or in a sounds/ subfolder
+
+Example structure:
+Commercial_models/
+  YourModel/
+    YourModel.model3.json
+    YourModel.moc3
+    YourModel.physics3.json
+    idle.motion3.json
+    happy.exp3.json
+    sound.wav
+
