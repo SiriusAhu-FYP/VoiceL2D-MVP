@@ -87,6 +87,21 @@ export default defineConfig({
             return
           }
 
+          if (req.method === 'GET' && pathname.startsWith('/api/live2d/model-path/')) {
+            const modelName = decodeURIComponent(pathname.replace('/api/live2d/model-path/', ''))
+            console.log(`[Live2D API] GET /api/live2d/model-path/${modelName}`)
+            const metadata = live2dStateManager.getModelMetadata(modelName)
+            if (metadata) {
+              sendJson(res, {
+                success: true,
+                data: { path: `${metadata.path}/${modelName}.model3.json` }
+              })
+            } else {
+              sendJson(res, { success: false, error: 'Model not found' }, 404)
+            }
+            return
+          }
+
           if (req.method === 'POST' && pathname === '/api/live2d/play') {
             let body = ''
             req.on('data', chunk => {

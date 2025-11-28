@@ -3,7 +3,7 @@ import * as PIXI from 'pixi.js';
 import { Live2DModel } from 'pixi-live2d-display/cubism4';
 import { startUpCubism4, cubism4Ready } from 'pixi-live2d-display/cubism4';
 import { ActionPanel } from './ActionPanel';
-import { updateCurrentModelState } from '../api/live2d-api';
+import { updateCurrentModelState, getActions, getModelPath } from '../api/live2d-api';
 
 type Live2DCubismCoreGlobal = {
     LogLevel_Verbose?: number;
@@ -55,6 +55,7 @@ export const Live2DComponent: React.FC = () => {
     const eventSourceRef = useRef<EventSource | null>(null);
     const idleRestoreRef = useRef<(() => void) | null>(null);
     const activeModelNameRef = useRef<string | null>(null);
+    const modelPathCacheRef = useRef<Map<string, string>>(new Map());
     const noopAction: SSECallbacks['playAction'] = (action, sound) => {
         void action;
         void sound;
@@ -72,6 +73,28 @@ export const Live2DComponent: React.FC = () => {
     });
     const [currentModel, setCurrentModel] = useState<string>('');
     const audioRef = useRef<HTMLAudioElement | null>(null);
+
+    // Helper function to get model resource base path
+    const getModelBasePath = useCallback(async (modelName: string): Promise<string> => {
+        // Check cache first
+        if (modelPathCacheRef.current.has(modelName)) {
+            return modelPathCacheRef.current.get(modelName)!;
+        }
+
+        // Get from API
+        const fullPath = await getModelPath(modelName);
+        if (fullPath) {
+            // Extract base path (remove the .model3.json part)
+            const basePath = fullPath.substring(0, fullPath.lastIndexOf('/'));
+            modelPathCacheRef.current.set(modelName, basePath);
+            return basePath;
+        }
+
+        // Fallback to default
+        const defaultPath = `/Resources/${modelName}`;
+        modelPathCacheRef.current.set(modelName, defaultPath);
+        return defaultPath;
+    }, []);
 
     const handlePlayAction = useCallback((action: string, sound?: string) => {
         if (!modelRef.current) {
@@ -104,19 +127,18 @@ export const Live2DComponent: React.FC = () => {
                 return;
             }
 
-            // Determine correct path based on model metadata
-            const isCommercialModel = modelNameForAssets === '英伦兔兔'; // Can be enhanced later
-            const basePath = isCommercialModel
-                ? `/Resources/Commercial_models/${modelNameForAssets}`
-                : `/Resources/${modelNameForAssets}`;
-
-            const audio = new Audio(`${basePath}/${sound}`);
-            audioRef.current = audio;
-            audio.play().catch((err) => {
-                console.error('Failed to play sound:', err);
+            // Get model base path dynamically
+            getModelBasePath(modelNameForAssets).then(basePath => {
+                const audio = new Audio(`${basePath}/${sound}`);
+                audioRef.current = audio;
+                audio.play().catch((err) => {
+                    console.error('Failed to play sound:', err);
+                });
+            }).catch(err => {
+                console.error('Failed to resolve model path:', err);
             });
         }
-    }, [currentModel]);
+    }, [currentModel, getModelBasePath]);
 
     const handlePlayExpression = useCallback((expression: string) => {
         if (!modelRef.current) {
@@ -148,18 +170,17 @@ export const Live2DComponent: React.FC = () => {
             return;
         }
 
-        // Determine correct path based on model metadata
-        const isCommercialModel = modelNameForAssets === '英伦兔兔'; // Can be enhanced later
-        const basePath = isCommercialModel
-            ? `/Resources/Commercial_models/${modelNameForAssets}`
-            : `/Resources/${modelNameForAssets}`;
-
-        const audio = new Audio(`${basePath}/${sound}`);
-        audioRef.current = audio;
-        audio.play().catch((err) => {
-            console.error('Failed to play sound:', err);
+        // Get model base path dynamically
+        getModelBasePath(modelNameForAssets).then(basePath => {
+            const audio = new Audio(`${basePath}/${sound}`);
+            audioRef.current = audio;
+            audio.play().catch((err) => {
+                console.error('Failed to play sound:', err);
+            });
+        }).catch(err => {
+            console.error('Failed to resolve model path:', err);
         });
-    }, [currentModel]);
+    }, [currentModel, getModelBasePath]);
 
     const handleModelSwitch = useCallback(async (modelPath: string) => {
         if (!appRef.current) {
@@ -269,16 +290,29 @@ export const Live2DComponent: React.FC = () => {
                 });
                 appRef.current = app;
 
-                const modelPath = '/Resources/Haru/Haru.model3.json';
+                // Get the last model from the models list
+                const resourcesData = await getActions();
+                const models = resourcesData?.models ?? [];
+
+                if (models.length === 0) {
+                    throw new Error('No Live2D models found in Resources directories');
+                }
+
+                const defaultModelName = models[models.length - 1];
+
+                // Get model path from API (required - no fallback)
+                const modelPath = await getModelPath(defaultModelName);
+
+                if (!modelPath) {
+                    throw new Error(`Failed to resolve path for model "${defaultModelName}". Model metadata may be unavailable.`);
+                }
+
+                console.log(`[Live2D] Loading default model: ${defaultModelName} from ${modelPath}`);
                 const model = await Live2DModel.from(modelPath);
                 modelRef.current = model;
 
-                const modelNameMatch = modelPath.match(/\/Resources\/([^/]+)\//);
-                if (modelNameMatch) {
-                    const resolvedModelName = modelNameMatch[1];
-                    activeModelNameRef.current = resolvedModelName;
-                    setCurrentModel(resolvedModelName);
-                }
+                activeModelNameRef.current = defaultModelName;
+                setCurrentModel(defaultModelName);
 
                 const internalModel = model.internalModel as typeof model.internalModel | undefined;
                 const motionManager = internalModel?.motionManager;

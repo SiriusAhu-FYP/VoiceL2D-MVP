@@ -24,6 +24,7 @@ export interface ModelActions {
 export interface ResourcesData {
     models: string[];
     actions: Record<string, ModelActions>;
+    modelPaths?: Record<string, string>; // Optional: map of model name to full path
 }
 
 export interface RandomComboData {
@@ -143,7 +144,20 @@ export async function updateCurrentModelState(modelName: string): Promise<boolea
     }
 }
 
-// 切换模型
+// 获取模型路径
+export async function getModelPath(modelName: string): Promise<string | null> {
+    try {
+        const response = await fetch(`${API_BASE}/model-path/${encodeURIComponent(modelName)}`);
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        const result = await response.json();
+        return result.success ? result.data?.path : null;
+    } catch (error) {
+        console.error('Failed to fetch model path:', error);
+        return null;
+    }
+}
 export async function switchModel(modelName: string): Promise<{ success: boolean; modelPath?: string; error?: string }> {
     try {
         const response = await fetch(`${API_BASE}/switch-model`, {
