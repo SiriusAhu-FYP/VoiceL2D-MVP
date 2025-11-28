@@ -234,6 +234,39 @@
 }
 `
 
+### 13. 切换模型
+
+**POST** /api/live2d/switch-model
+
+切换到指定的 Live2D 模型。支持普通模型和 VTuber Studio 商业模型。
+
+**请求体：**
+```json
+{
+  "modelName": "Haru"
+}
+```
+
+**响应示例：**
+```json
+{
+  "success": true,
+  "message": "Model switched successfully",
+  "data": {
+    "modelName": "Haru",
+    "modelPath": "/Resources/Commercial_models/Haru/Haru.model3.json"
+  }
+}
+```
+
+**说明：**
+- 切换模型会触发 SSE `modelSwitch` 事件，所有连接的客户端会接收到通知
+- 模型会自动从以下位置扫描：
+  - 普通模型：`/Resources/{modelName}/`
+  - 商业模型：`/Resources/Commercial_models/{modelName}/`
+- VTuber Studio 模型会自动识别（包含 `.vtube.json` 文件）
+- VTuber Studio 模型的表情和动作会自动从根目录扫描
+
 
 ## 使用示例
 
@@ -265,6 +298,11 @@ curl -X POST http://localhost:7788/api/live2d/sound \
 
 # 获取当前模型状态
 curl http://localhost:7788/api/live2d/state
+
+# 切换模型
+curl -X POST http://localhost:7788/api/live2d/switch-model \
+  -H "Content-Type: application/json" \
+  -d '{"modelName": "Haru"}'
 
 # 更新当前模型
 curl -X POST http://localhost:7788/api/live2d/state \

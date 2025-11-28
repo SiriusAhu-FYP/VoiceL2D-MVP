@@ -143,6 +143,37 @@ export async function updateCurrentModelState(modelName: string): Promise<boolea
     }
 }
 
+// 切换模型
+export async function switchModel(modelName: string): Promise<{ success: boolean; modelPath?: string; error?: string }> {
+    try {
+        const response = await fetch(`${API_BASE}/switch-model`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ modelName }),
+        });
+        const result = await response.json();
+        if (result.success) {
+            return {
+                success: true,
+                modelPath: result.data?.modelPath,
+            };
+        } else {
+            return {
+                success: false,
+                error: result.error || 'Unknown error',
+            };
+        }
+    } catch (error) {
+        console.error('Failed to switch model:', error);
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : 'Network error',
+        };
+    }
+}
+
 export async function playMotionByIndex(index: number): Promise<MotionInfo | null> {
     try {
         const response = await fetch(`${API_BASE}/motion/index`, {

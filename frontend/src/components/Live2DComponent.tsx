@@ -136,6 +136,75 @@ export const Live2DComponent: React.FC = () => {
         });
     }, [currentModel]);
 
+    const handleModelSwitch = useCallback(async (modelPath: string) => {
+        if (!appRef.current) {
+            console.warn('PIXI app not initialized yet');
+            return;
+        }
+
+        try {
+            console.log('[Live2D] Switching to model:', modelPath);
+
+            // Dispose old model
+            if (modelRef.current) {
+                if (idleRestoreRef.current) {
+                    idleRestoreRef.current();
+                    idleRestoreRef.current = null;
+                }
+                appRef.current.stage.removeChild(modelRef.current as unknown as PIXI.DisplayObject);
+                modelRef.current.destroy();
+                modelRef.current = null;
+            }
+
+            // Stop any playing audio
+            if (audioRef.current) {
+                audioRef.current.pause();
+                audioRef.current.currentTime = 0;
+                audioRef.current = null;
+            }
+
+            // Load new model
+            const model = await Live2DModel.from(modelPath);
+            modelRef.current = model;
+
+            // Extract model name from path
+            const modelNameMatch = modelPath.match(/\/Resources\/(?:Commercial_models\/)?([^/]+)\//);
+            if (modelNameMatch) {
+                const resolvedModelName = modelNameMatch[1];
+                activeModelNameRef.current = resolvedModelName;
+                setCurrentModel(resolvedModelName);
+
+                // Update backend state
+                await updateCurrentModelState(resolvedModelName);
+            }
+
+            // Disable idle motions
+            const internalModel = model.internalModel as typeof model.internalModel | undefined;
+            const motionManager = internalModel?.motionManager;
+            if (motionManager?.state) {
+                motionManager.stopAllMotions();
+                motionManager.state.setReservedIdle?.(undefined, undefined);
+                const originalShouldRequestIdleMotion = motionManager.state.shouldRequestIdleMotion.bind(motionManager.state);
+                motionManager.state.shouldRequestIdleMotion = () => false;
+                idleRestoreRef.current = () => {
+                    motionManager.state.shouldRequestIdleMotion = originalShouldRequestIdleMotion;
+                };
+            }
+
+            // Add to stage and position
+            appRef.current.stage.addChild(model as unknown as PIXI.DisplayObject);
+            model.anchor.set(0.5, 0.5);
+            model.x = appRef.current.screen.width / 2;
+            model.y = appRef.current.screen.height / 2;
+            model.scale.set(0.2);
+
+            console.log('[Live2D] Model switched successfully');
+        } catch (error) {
+            console.error('[Live2D] Failed to switch model:', error);
+            alert(`切换模型失败: ${error instanceof Error ? error.message : '未知错误'}`);
+        }
+    }, []);
+
     useEffect(() => {
         sseCallbacksRef.current = {
             playAction: handlePlayAction,
@@ -155,12 +224,9 @@ export const Live2DComponent: React.FC = () => {
 
                 const Live2DCubismCore = live2dWindow.Live2DCubismCore;
                 if (Live2DCubismCore) {
-                    const logFunction = Live2DCubismCore.LogLevel_Verbose !== undefined
-                        ? (message: string) => console.log('[Live2D]', message)
-                        : undefined;
                     startUpCubism4({
-                        logFunction,
                         loggingLevel: 2,
+                        logFunction: (message: string) => console.log('[Live2D]', message),
                     });
                     await cubism4Ready();
                 } else {
@@ -168,7 +234,7 @@ export const Live2DComponent: React.FC = () => {
                 }
 
                 const app = new PIXI.Application({
-                    view: canvasRef.current,
+                    view: canvasRef.current ?? undefined,
                     width: window.innerWidth,
                     height: window.innerHeight,
                     backgroundColor: 0x000000,
@@ -316,9 +382,22 @@ export const Live2DComponent: React.FC = () => {
             }
         };
 
+        const handleModelSwitchEvent = (event: MessageEvent) => {
+            try {
+                const payload = JSON.parse(event.data);
+                if (payload.modelPath) {
+                    console.log('[Live2D SSE] Received model switch event:', payload);
+                    handleModelSwitch(payload.modelPath);
+                }
+            } catch (error) {
+                console.error('Failed to parse modelSwitch payload', error);
+            }
+        };
+
         eventSource.addEventListener('action', handleActionEvent);
         eventSource.addEventListener('expression', handleExpressionEvent);
         eventSource.addEventListener('sound', handleSoundEvent);
+        eventSource.addEventListener('modelSwitch', handleModelSwitchEvent);
         eventSource.onerror = (error) => {
             console.error('Live2D SSE connection error', error);
         };
@@ -328,10 +407,11 @@ export const Live2DComponent: React.FC = () => {
             eventSource.removeEventListener('action', handleActionEvent);
             eventSource.removeEventListener('expression', handleExpressionEvent);
             eventSource.removeEventListener('sound', handleSoundEvent);
+            eventSource.removeEventListener('modelSwitch', handleModelSwitchEvent);
             eventSource.close();
             eventSourceRef.current = null;
         };
-    }, []);
+    }, [handleModelSwitch]);
 
     return (
         <>
@@ -345,6 +425,7 @@ export const Live2DComponent: React.FC = () => {
                 onPlayAction={handlePlayAction}
                 onPlayExpression={handlePlayExpression}
                 onPlaySound={handlePlaySound}
+                onModelSwitch={(modelName) => console.log('[ActionPanel] Model switch requested:', modelName)}
             />
         </>
     );

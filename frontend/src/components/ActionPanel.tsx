@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { getActions, playAction, playExpression, playSound, type ResourcesData, type MotionInfo } from '../api/live2d-api';
+import { getActions, playAction, playExpression, playSound, switchModel, type ResourcesData, type MotionInfo } from '../api/live2d-api';
 import './ActionPanel.css';
 
 interface ActionPanelProps {
@@ -12,17 +12,20 @@ interface ActionPanelProps {
     onPlayAction?: (action: string, sound?: string) => void;
     onPlayExpression?: (expression: string) => void;
     onPlaySound?: (sound: string) => void;
+    onModelSwitch?: (modelName: string) => void;
 }
 
 export const ActionPanel: React.FC<ActionPanelProps> = ({
     currentModel,
     onPlayAction,
     onPlayExpression,
-    onPlaySound
+    onPlaySound,
+    onModelSwitch
 }) => {
     const [isVisible, setIsVisible] = useState(false);
     const [resourcesData, setResourcesData] = useState<ResourcesData | null>(null);
     const [loading, setLoading] = useState(true);
+    const [switching, setSwitching] = useState(false);
 
     useEffect(() => {
         // 加载动作列表
@@ -56,6 +59,32 @@ export const ActionPanel: React.FC<ActionPanelProps> = ({
             onPlaySound(sound);
         }
         await playSound(sound);
+    };
+
+    const handleModelChange = async (event: React.ChangeEvent<HTMLSelectElement>) => {
+        const newModelName = event.target.value;
+        if (newModelName === currentModel) {
+            return;
+        }
+
+        setSwitching(true);
+        try {
+            const result = await switchModel(newModelName);
+            if (result.success) {
+                // The actual model switch will be handled by SSE event in Live2DComponent
+                if (onModelSwitch) {
+                    onModelSwitch(newModelName);
+                }
+            } else {
+                console.error('Failed to switch model:', result.error);
+                alert(`切换模型失败: ${result.error || '未知错误'}`);
+            }
+        } catch (error) {
+            console.error('Error switching model:', error);
+            alert('切换模型时发生错误');
+        } finally {
+            setSwitching(false);
+        }
     };
 
     const currentModelActions = resourcesData?.actions[currentModel];
@@ -94,6 +123,27 @@ export const ActionPanel: React.FC<ActionPanelProps> = ({
                         >
                             ×
                         </button>
+                    </div>
+
+                    {/* 模型选择器 */}
+                    <div className="model-selector-container">
+                        <label htmlFor="model-select" className="model-selector-label">
+                            选择模型:
+                        </label>
+                        <select
+                            id="model-select"
+                            className="model-selector"
+                            value={currentModel}
+                            onChange={handleModelChange}
+                            disabled={switching || loading}
+                        >
+                            {resourcesData?.models.map((modelName) => (
+                                <option key={modelName} value={modelName}>
+                                    {modelName}
+                                </option>
+                            ))}
+                        </select>
+                        {switching && <span className="model-switching-indicator">切换中...</span>}
                     </div>
 
                     <div className="action-panel-content">

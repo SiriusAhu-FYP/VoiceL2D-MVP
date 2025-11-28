@@ -177,6 +177,50 @@ export default defineConfig({
             return
           }
 
+          if (req.method === 'POST' && pathname === '/api/live2d/switch-model') {
+            let body = ''
+            req.on('data', chunk => {
+              body += chunk.toString()
+            })
+            req.on('end', () => {
+              try {
+                const payload = JSON.parse(body) as { modelName?: unknown }
+                if (typeof payload.modelName !== 'string' || payload.modelName.trim() === '') {
+                  throw new Error('Invalid modelName')
+                }
+                const modelName = payload.modelName.trim()
+                const success = live2dStateManager.setCurrentModel(modelName)
+                if (!success) {
+                  sendJson(res, { success: false, error: 'Model not found' }, 400)
+                  return
+                }
+
+                // Get model metadata for path information
+                const metadata = live2dStateManager.getModelMetadata(modelName)
+                const modelPath = metadata?.path ?? `/Resources/${modelName}`
+
+                // Broadcast model switch event to all connected clients
+                broadcastEvent('modelSwitch', {
+                  modelName,
+                  modelPath: `${modelPath}/${modelName}.model3.json`
+                })
+
+                sendJson(res, {
+                  success: true,
+                  message: 'Model switched successfully',
+                  data: {
+                    modelName,
+                    modelPath: `${modelPath}/${modelName}.model3.json`
+                  }
+                })
+              } catch (error) {
+                console.error('[Live2D API] Invalid switch-model payload', error)
+                sendJson(res, { success: false, error: 'Invalid request' }, 400)
+              }
+            })
+            return
+          }
+
           if (req.method === 'POST' && pathname === '/api/live2d/motion/index') {
             let body = ''
             req.on('data', chunk => {

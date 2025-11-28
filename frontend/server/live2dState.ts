@@ -20,8 +20,14 @@ const expressionKey = (expression: ExpressionInfo): string | undefined => {
   return expression.name ?? expression.file;
 };
 
+interface ModelMetadata {
+  path: string;
+  isVTuberStudio: boolean;
+}
+
 export class Live2DStateManager {
   private dataset: ResourcesData = { models: [], actions: {} };
+  private modelMetadata: Map<string, ModelMetadata> = new Map();
   private currentModel: string | null = null;
   private lastModelUpdateAt: number | null = null;
 
@@ -34,6 +40,10 @@ export class Live2DStateManager {
     this.dataset = this.scanResources();
     this.ensureCurrentModel();
     return this.dataset;
+  }
+
+  getModelMetadata(modelName: string): ModelMetadata | undefined {
+    return this.modelMetadata.get(modelName);
   }
 
   getResourcesSnapshot(): ResourcesData {
@@ -168,10 +178,10 @@ export class Live2DStateManager {
 
   pickRandomCombo():
     | {
-        motion: MotionInfo;
-        expression: ExpressionInfo;
-        sound: string;
-      }
+      motion: MotionInfo;
+      expression: ExpressionInfo;
+      sound: string;
+    }
     | { error: string } {
     const actions = this.getCurrentModelActions();
     if (!actions) {
@@ -228,84 +238,209 @@ export class Live2DStateManager {
       return result;
     }
 
-    const models = readdirSync(resourcesPath).filter((item) => {
-      const itemPath = join(resourcesPath, item);
-      return statSync(itemPath).isDirectory() && !item.startsWith('.');
+    // Scan regular models in Resources directory
+    this.scanRegularModels(resourcesPath, result);
+
+    // Scan Commercial_models subdirectory
+    const commercialModelsPath = join(resourcesPath, 'Commercial_models');
+    if (existsSync(commercialModelsPath) && statSync(commercialModelsPath).isDirectory()) {
+      this.scanCommercialModels(commercialModelsPath, result);
+    }
+
+    return result;
+  }
+
+  private scanRegularModels(basePath: string, result: ResourcesData): void {
+    const items = readdirSync(basePath).filter((item) => {
+      const itemPath = join(basePath, item);
+      // Skip Commercial_models directory and hidden directories
+      if (item === 'Commercial_models' || item.startsWith('.')) {
+        return false;
+      }
+      return statSync(itemPath).isDirectory();
     });
 
-    result.models = models;
-
-    for (const model of models) {
-      const modelPath = join(resourcesPath, model);
-      const modelJsonPath = join(modelPath, `${model}.model3.json`);
+    for (const modelName of items) {
+      const modelPath = join(basePath, modelName);
+      const modelJsonPath = join(modelPath, `${modelName}.model3.json`);
 
       if (!existsSync(modelJsonPath)) {
         continue;
       }
 
-      try {
-        interface MotionFileReference {
-          File?: string;
-          Sound?: string;
-        }
-        interface ExpressionFileReference {
-          Name?: string;
-          File?: string;
-        }
-        interface ModelJson {
-          FileReferences?: {
-            Motions?: Record<string, MotionFileReference[]>;
-            Expressions?: ExpressionFileReference[];
-          };
-        }
+      const actions = this.parseRegularModel(modelPath, modelName, modelJsonPath);
+      if (actions) {
+        result.models.push(modelName);
+        result.actions[modelName] = actions;
+        this.modelMetadata.set(modelName, {
+          path: `/Resources/${modelName}`,
+          isVTuberStudio: false,
+        });
+      }
+    }
+  }
 
-        const modelJson = JSON.parse(readFileSync(modelJsonPath, 'utf-8')) as ModelJson;
-        const motions: MotionInfo[] = [];
-        const expressions: ExpressionInfo[] = [];
-        const sounds: string[] = [];
+  private scanCommercialModels(commercialPath: string, result: ResourcesData): void {
+    const modelFolders = readdirSync(commercialPath).filter((item) => {
+      const itemPath = join(commercialPath, item);
+      return statSync(itemPath).isDirectory() && !item.startsWith('.');
+    });
 
-        const soundsPath = join(modelPath, 'sounds');
-        if (existsSync(soundsPath)) {
-          const soundFiles = readdirSync(soundsPath).filter((file) =>
-            file.endsWith('.wav') || file.endsWith('.mp3') || file.endsWith('.ogg'),
-          );
-          sounds.push(...soundFiles.map((file) => `sounds/${file}`));
+    for (const modelName of modelFolders) {
+      const modelPath = join(commercialPath, modelName);
+      const modelJsonPath = join(modelPath, `${modelName}.model3.json`);
+      const vtubeJsonPath = join(modelPath, `${modelName}.vtube.json`);
+
+      if (!existsSync(modelJsonPath)) {
+        continue;
+      }
+
+      // Check if this is a VTuber Studio model
+      const isVTuberStudio = existsSync(vtubeJsonPath);
+
+      const actions = isVTuberStudio
+        ? this.parseVTuberStudioModel(modelPath, modelName, modelJsonPath, vtubeJsonPath)
+        : this.parseRegularModel(modelPath, modelName, modelJsonPath);
+
+      if (actions) {
+        result.models.push(modelName);
+        result.actions[modelName] = actions;
+        this.modelMetadata.set(modelName, {
+          path: `/Resources/Commercial_models/${modelName}`,
+          isVTuberStudio,
+        });
+      }
+    }
+  }
+
+  private parseRegularModel(modelPath: string, _modelName: string, modelJsonPath: string): ModelActions | null {
+    try {
+      interface MotionFileReference {
+        File?: string;
+        Sound?: string;
+      }
+      interface ExpressionFileReference {
+        Name?: string;
+        File?: string;
+      }
+      interface ModelJson {
+        FileReferences?: {
+          Motions?: Record<string, MotionFileReference[]>;
+          Expressions?: ExpressionFileReference[];
+        };
+      }
+
+      const modelJson = JSON.parse(readFileSync(modelJsonPath, 'utf-8')) as ModelJson;
+      const motions: MotionInfo[] = [];
+      const expressions: ExpressionInfo[] = [];
+      const sounds: string[] = [];
+
+      // Scan sounds directory
+      const soundsPath = join(modelPath, 'sounds');
+      if (existsSync(soundsPath)) {
+        const soundFiles = readdirSync(soundsPath).filter((file) =>
+          file.endsWith('.wav') || file.endsWith('.mp3') || file.endsWith('.ogg'),
+        );
+        sounds.push(...soundFiles.map((file) => `sounds/${file}`));
+      }
+
+      // Parse motions from model3.json
+      const motionReferences = modelJson.FileReferences?.Motions ?? {};
+      for (const [group, motionList] of Object.entries(motionReferences)) {
+        if (!Array.isArray(motionList)) {
+          continue;
         }
-
-        const motionReferences = modelJson.FileReferences?.Motions ?? {};
-        for (const [group, motionList] of Object.entries(motionReferences)) {
-          if (!Array.isArray(motionList)) {
-            continue;
-          }
-          motionList.forEach((motion, index) => {
-            if (motion?.File) {
-              motions.push({
-                group,
-                name: `${group}_${index}`,
-                file: motion.File,
-                sound: motion.Sound,
-              });
-            }
-          });
-        }
-
-        const expressionReferences = modelJson.FileReferences?.Expressions ?? [];
-        expressionReferences.forEach((expr) => {
-          if (expr?.Name && expr?.File) {
-            expressions.push({
-              name: expr.Name,
-              file: expr.File,
+        motionList.forEach((motion, index) => {
+          if (motion?.File) {
+            motions.push({
+              group,
+              name: `${group}_${index}`,
+              file: motion.File,
+              sound: motion.Sound,
             });
           }
         });
-
-        result.actions[model] = { motions, expressions, sounds };
-      } catch (error) {
-        console.error(`Error parsing ${modelJsonPath}:`, error);
       }
-    }
 
-    return result;
+      // Parse expressions from model3.json
+      const expressionReferences = modelJson.FileReferences?.Expressions ?? [];
+      expressionReferences.forEach((expr) => {
+        if (expr?.Name && expr?.File) {
+          expressions.push({
+            name: expr.Name,
+            file: expr.File,
+          });
+        }
+      });
+
+      return { motions, expressions, sounds };
+    } catch (error) {
+      console.error(`Error parsing regular model ${modelJsonPath}:`, error);
+      return null;
+    }
+  }
+
+  private parseVTuberStudioModel(
+    modelPath: string,
+    modelName: string,
+    modelJsonPath: string,
+    vtubeJsonPath: string,
+  ): ModelActions | null {
+    try {
+      // First try to parse standard model3.json structure
+      const regularActions = this.parseRegularModel(modelPath, modelName, modelJsonPath);
+
+      const motions: MotionInfo[] = regularActions?.motions ?? [];
+      const expressions: ExpressionInfo[] = regularActions?.expressions ?? [];
+      const sounds: string[] = regularActions?.sounds ?? [];
+
+      // Auto-scan for motion files in root directory (VTuber Studio style)
+      const files = readdirSync(modelPath);
+
+      files.forEach((file) => {
+        const filePath = join(modelPath, file);
+        if (statSync(filePath).isFile()) {
+          // Scan for motion files
+          if (file.endsWith('.motion3.json')) {
+            const motionName = file.replace('.motion3.json', '');
+            // Avoid duplicates from model3.json
+            if (!motions.some(m => m.file === file)) {
+              motions.push({
+                group: 'VTuberStudio',
+                name: motionName,
+                file: file,
+              });
+            }
+          }
+
+          // Scan for expression files
+          if (file.endsWith('.exp3.json')) {
+            const expressionName = file.replace('.exp3.json', '');
+            // Avoid duplicates from model3.json
+            if (!expressions.some(e => e.file === file)) {
+              expressions.push({
+                name: expressionName,
+                file: file,
+              });
+            }
+          }
+        }
+      });
+
+      // Parse vtube.json for additional metadata (optional, for future use)
+      try {
+        JSON.parse(readFileSync(vtubeJsonPath, 'utf-8'));
+        // VTuber Studio metadata is available but not used for now
+        // Can be extended to read IdleAnimation, physics settings, etc.
+      } catch (vtubeError) {
+        console.warn(`Warning: Could not parse ${vtubeJsonPath}:`, vtubeError);
+      }
+
+      return { motions, expressions, sounds };
+    } catch (error) {
+      console.error(`Error parsing VTuber Studio model ${modelJsonPath}:`, error);
+      return null;
+    }
   }
 }
 
