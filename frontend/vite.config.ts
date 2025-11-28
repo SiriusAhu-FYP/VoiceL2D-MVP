@@ -87,6 +87,21 @@ export default defineConfig({
             return
           }
 
+          if (req.method === 'GET' && pathname.startsWith('/api/live2d/model-path/')) {
+            const modelName = decodeURIComponent(pathname.replace('/api/live2d/model-path/', ''))
+            console.log(`[Live2D API] GET /api/live2d/model-path/${modelName}`)
+            const metadata = live2dStateManager.getModelMetadata(modelName)
+            if (metadata) {
+              sendJson(res, {
+                success: true,
+                data: { path: `${metadata.path}/${modelName}.model3.json` }
+              })
+            } else {
+              sendJson(res, { success: false, error: 'Model not found' }, 404)
+            }
+            return
+          }
+
           if (req.method === 'POST' && pathname === '/api/live2d/play') {
             let body = ''
             req.on('data', chunk => {
@@ -171,6 +186,50 @@ export default defineConfig({
                 sendJson(res, { success: true, message: 'Current model updated' })
               } catch (error) {
                 console.error('[Live2D API] Invalid state payload', error)
+                sendJson(res, { success: false, error: 'Invalid request' }, 400)
+              }
+            })
+            return
+          }
+
+          if (req.method === 'POST' && pathname === '/api/live2d/switch-model') {
+            let body = ''
+            req.on('data', chunk => {
+              body += chunk.toString()
+            })
+            req.on('end', () => {
+              try {
+                const payload = JSON.parse(body) as { modelName?: unknown }
+                if (typeof payload.modelName !== 'string' || payload.modelName.trim() === '') {
+                  throw new Error('Invalid modelName')
+                }
+                const modelName = payload.modelName.trim()
+                const success = live2dStateManager.setCurrentModel(modelName)
+                if (!success) {
+                  sendJson(res, { success: false, error: 'Model not found' }, 400)
+                  return
+                }
+
+                // Get model metadata for path information
+                const metadata = live2dStateManager.getModelMetadata(modelName)
+                const modelPath = metadata?.path ?? `/Resources/${modelName}`
+
+                // Broadcast model switch event to all connected clients
+                broadcastEvent('modelSwitch', {
+                  modelName,
+                  modelPath: `${modelPath}/${modelName}.model3.json`
+                })
+
+                sendJson(res, {
+                  success: true,
+                  message: 'Model switched successfully',
+                  data: {
+                    modelName,
+                    modelPath: `${modelPath}/${modelName}.model3.json`
+                  }
+                })
+              } catch (error) {
+                console.error('[Live2D API] Invalid switch-model payload', error)
                 sendJson(res, { success: false, error: 'Invalid request' }, 400)
               }
             })

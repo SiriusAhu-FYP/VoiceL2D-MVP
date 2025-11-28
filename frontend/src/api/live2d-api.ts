@@ -24,6 +24,7 @@ export interface ModelActions {
 export interface ResourcesData {
     models: string[];
     actions: Record<string, ModelActions>;
+    modelPaths?: Record<string, string>; // Optional: map of model name to full path
 }
 
 export interface RandomComboData {
@@ -140,6 +141,50 @@ export async function updateCurrentModelState(modelName: string): Promise<boolea
     } catch (error) {
         console.error('Failed to update current model state:', error);
         return false;
+    }
+}
+
+// 获取模型路径
+export async function getModelPath(modelName: string): Promise<string | null> {
+    try {
+        const response = await fetch(`${API_BASE}/model-path/${encodeURIComponent(modelName)}`);
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        const result = await response.json();
+        return result.success ? result.data?.path : null;
+    } catch (error) {
+        console.error('Failed to fetch model path:', error);
+        return null;
+    }
+}
+export async function switchModel(modelName: string): Promise<{ success: boolean; modelPath?: string; error?: string }> {
+    try {
+        const response = await fetch(`${API_BASE}/switch-model`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ modelName }),
+        });
+        const result = await response.json();
+        if (result.success) {
+            return {
+                success: true,
+                modelPath: result.data?.modelPath,
+            };
+        } else {
+            return {
+                success: false,
+                error: result.error || 'Unknown error',
+            };
+        }
+    } catch (error) {
+        console.error('Failed to switch model:', error);
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : 'Network error',
+        };
     }
 }
 

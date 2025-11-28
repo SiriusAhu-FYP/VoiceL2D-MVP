@@ -3,8 +3,7 @@ import * as PIXI from 'pixi.js';
 import { Live2DModel } from 'pixi-live2d-display/cubism4';
 import { startUpCubism4, cubism4Ready } from 'pixi-live2d-display/cubism4';
 import { ActionPanel } from './ActionPanel';
-import { VersionBadge } from './VersionBadge';
-import { updateCurrentModelState } from '../api/live2d-api';
+import { updateCurrentModelState, getActions, getModelPath } from '../api/live2d-api';
 
 type Live2DCubismCoreGlobal = {
     LogLevel_Verbose?: number;
@@ -56,6 +55,7 @@ export const Live2DComponent: React.FC = () => {
     const eventSourceRef = useRef<EventSource | null>(null);
     const idleRestoreRef = useRef<(() => void) | null>(null);
     const activeModelNameRef = useRef<string | null>(null);
+    const modelPathCacheRef = useRef<Map<string, string>>(new Map());
     const noopAction: SSECallbacks['playAction'] = (action, sound) => {
         void action;
         void sound;
@@ -74,6 +74,28 @@ export const Live2DComponent: React.FC = () => {
     const [currentModel, setCurrentModel] = useState<string>('');
     const audioRef = useRef<HTMLAudioElement | null>(null);
 
+    // Helper function to get model resource base path
+    const getModelBasePath = useCallback(async (modelName: string): Promise<string> => {
+        // Check cache first
+        if (modelPathCacheRef.current.has(modelName)) {
+            return modelPathCacheRef.current.get(modelName)!;
+        }
+
+        // Get from API
+        const fullPath = await getModelPath(modelName);
+        if (fullPath) {
+            // Extract base path (remove the .model3.json part)
+            const basePath = fullPath.substring(0, fullPath.lastIndexOf('/'));
+            modelPathCacheRef.current.set(modelName, basePath);
+            return basePath;
+        }
+
+        // Fallback to default
+        const defaultPath = `/Resources/${modelName}`;
+        modelPathCacheRef.current.set(modelName, defaultPath);
+        return defaultPath;
+    }, []);
+
     const handlePlayAction = useCallback((action: string, sound?: string) => {
         if (!modelRef.current) {
             console.warn('Model not loaded yet');
@@ -85,8 +107,13 @@ export const Live2DComponent: React.FC = () => {
             motionGroup = motionGroup.replace('@', '');
         }
 
+        // For VTuber Studio models, try motion by file name first, then fall back to group
         modelRef.current.motion(motionGroup, undefined, 3).catch((err) => {
-            console.error('Failed to play motion:', err);
+            console.warn(`Motion playback failed for group "${motionGroup}":`, err);
+            // Try to play by index 0 of the group as fallback
+            modelRef.current?.motion(motionGroup, 0, 3).catch((err2) => {
+                console.error('Motion playback failed completely:', err2);
+            });
         });
 
         if (sound) {
@@ -99,13 +126,19 @@ export const Live2DComponent: React.FC = () => {
                 console.warn('Cannot resolve model name for audio playback yet');
                 return;
             }
-            const audio = new Audio(`/Resources/${modelNameForAssets}/${sound}`);
-            audioRef.current = audio;
-            audio.play().catch((err) => {
-                console.error('Failed to play sound:', err);
+
+            // Get model base path dynamically
+            getModelBasePath(modelNameForAssets).then(basePath => {
+                const audio = new Audio(`${basePath}/${sound}`);
+                audioRef.current = audio;
+                audio.play().catch((err) => {
+                    console.error('Failed to play sound:', err);
+                });
+            }).catch(err => {
+                console.error('Failed to resolve model path:', err);
             });
         }
-    }, [currentModel]);
+    }, [currentModel, getModelBasePath]);
 
     const handlePlayExpression = useCallback((expression: string) => {
         if (!modelRef.current) {
@@ -113,8 +146,15 @@ export const Live2DComponent: React.FC = () => {
             return;
         }
 
+        // Try to play expression - pixi-live2d-display will handle both by name and by file
         modelRef.current.expression(expression).catch((err) => {
-            console.error('Failed to play expression:', err);
+            console.warn(`Expression playback failed for "${expression}":`, err);
+            // For VTuber Studio models, try with .exp3.json extension if not included
+            if (!expression.endsWith('.exp3.json')) {
+                modelRef.current?.expression(`${expression}.exp3.json`).catch((err2) => {
+                    console.error('Expression playback failed completely:', err2);
+                });
+            }
         });
     }, []);
 
@@ -129,12 +169,87 @@ export const Live2DComponent: React.FC = () => {
             console.warn('Cannot resolve model name for audio playback yet');
             return;
         }
-        const audio = new Audio(`/Resources/${modelNameForAssets}/${sound}`);
-        audioRef.current = audio;
-        audio.play().catch((err) => {
-            console.error('Failed to play sound:', err);
+
+        // Get model base path dynamically
+        getModelBasePath(modelNameForAssets).then(basePath => {
+            const audio = new Audio(`${basePath}/${sound}`);
+            audioRef.current = audio;
+            audio.play().catch((err) => {
+                console.error('Failed to play sound:', err);
+            });
+        }).catch(err => {
+            console.error('Failed to resolve model path:', err);
         });
-    }, [currentModel]);
+    }, [currentModel, getModelBasePath]);
+
+    const handleModelSwitch = useCallback(async (modelPath: string) => {
+        if (!appRef.current) {
+            console.warn('PIXI app not initialized yet');
+            return;
+        }
+
+        try {
+            console.log('[Live2D] Switching to model:', modelPath);
+
+            // Dispose old model
+            if (modelRef.current) {
+                if (idleRestoreRef.current) {
+                    idleRestoreRef.current();
+                    idleRestoreRef.current = null;
+                }
+                appRef.current.stage.removeChild(modelRef.current as unknown as PIXI.DisplayObject);
+                modelRef.current.destroy();
+                modelRef.current = null;
+            }
+
+            // Stop any playing audio
+            if (audioRef.current) {
+                audioRef.current.pause();
+                audioRef.current.currentTime = 0;
+                audioRef.current = null;
+            }
+
+            // Load new model
+            const model = await Live2DModel.from(modelPath);
+            modelRef.current = model;
+
+            // Extract model name from path
+            const modelNameMatch = modelPath.match(/\/Resources\/(?:Commercial_models\/)?([^/]+)\//);
+            if (modelNameMatch) {
+                const resolvedModelName = modelNameMatch[1];
+                activeModelNameRef.current = resolvedModelName;
+                setCurrentModel(resolvedModelName);
+
+                // Update backend state
+                await updateCurrentModelState(resolvedModelName);
+            }
+
+            // Disable idle motions
+            const internalModel = model.internalModel as typeof model.internalModel | undefined;
+            const motionManager = internalModel?.motionManager;
+            if (motionManager?.state) {
+                motionManager.stopAllMotions();
+                motionManager.state.setReservedIdle?.(undefined, undefined);
+                const originalShouldRequestIdleMotion = motionManager.state.shouldRequestIdleMotion.bind(motionManager.state);
+                motionManager.state.shouldRequestIdleMotion = () => false;
+                idleRestoreRef.current = () => {
+                    motionManager.state.shouldRequestIdleMotion = originalShouldRequestIdleMotion;
+                };
+            }
+
+            // Add to stage and position
+            appRef.current.stage.addChild(model as unknown as PIXI.DisplayObject);
+            model.anchor.set(0.5, 0.5);
+            model.x = appRef.current.screen.width / 2;
+            model.y = appRef.current.screen.height / 2;
+            model.scale.set(0.2);
+
+            console.log('[Live2D] Model switched successfully');
+        } catch (error) {
+            console.error('[Live2D] Failed to switch model:', error);
+            alert(`切换模型失败: ${error instanceof Error ? error.message : '未知错误'}`);
+        }
+    }, []);
 
     useEffect(() => {
         sseCallbacksRef.current = {
@@ -155,12 +270,9 @@ export const Live2DComponent: React.FC = () => {
 
                 const Live2DCubismCore = live2dWindow.Live2DCubismCore;
                 if (Live2DCubismCore) {
-                    const logFunction = Live2DCubismCore.LogLevel_Verbose !== undefined
-                        ? (message: string) => console.log('[Live2D]', message)
-                        : undefined;
                     startUpCubism4({
-                        logFunction,
                         loggingLevel: 2,
+                        logFunction: (message: string) => console.log('[Live2D]', message),
                     });
                     await cubism4Ready();
                 } else {
@@ -168,7 +280,7 @@ export const Live2DComponent: React.FC = () => {
                 }
 
                 const app = new PIXI.Application({
-                    view: canvasRef.current,
+                    view: canvasRef.current ?? undefined,
                     width: window.innerWidth,
                     height: window.innerHeight,
                     backgroundColor: 0x000000,
@@ -178,16 +290,29 @@ export const Live2DComponent: React.FC = () => {
                 });
                 appRef.current = app;
 
-                const modelPath = '/Resources/Haru/Haru.model3.json';
+                // Get the last model from the models list
+                const resourcesData = await getActions();
+                const models = resourcesData?.models ?? [];
+
+                if (models.length === 0) {
+                    throw new Error('No Live2D models found in Resources directories');
+                }
+
+                const defaultModelName = models[models.length - 1];
+
+                // Get model path from API (required - no fallback)
+                const modelPath = await getModelPath(defaultModelName);
+
+                if (!modelPath) {
+                    throw new Error(`Failed to resolve path for model "${defaultModelName}". Model metadata may be unavailable.`);
+                }
+
+                console.log(`[Live2D] Loading default model: ${defaultModelName} from ${modelPath}`);
                 const model = await Live2DModel.from(modelPath);
                 modelRef.current = model;
 
-                const modelNameMatch = modelPath.match(/\/Resources\/([^/]+)\//);
-                if (modelNameMatch) {
-                    const resolvedModelName = modelNameMatch[1];
-                    activeModelNameRef.current = resolvedModelName;
-                    setCurrentModel(resolvedModelName);
-                }
+                activeModelNameRef.current = defaultModelName;
+                setCurrentModel(defaultModelName);
 
                 const internalModel = model.internalModel as typeof model.internalModel | undefined;
                 const motionManager = internalModel?.motionManager;
@@ -316,9 +441,22 @@ export const Live2DComponent: React.FC = () => {
             }
         };
 
+        const handleModelSwitchEvent = (event: MessageEvent) => {
+            try {
+                const payload = JSON.parse(event.data);
+                if (payload.modelPath) {
+                    console.log('[Live2D SSE] Received model switch event:', payload);
+                    handleModelSwitch(payload.modelPath);
+                }
+            } catch (error) {
+                console.error('Failed to parse modelSwitch payload', error);
+            }
+        };
+
         eventSource.addEventListener('action', handleActionEvent);
         eventSource.addEventListener('expression', handleExpressionEvent);
         eventSource.addEventListener('sound', handleSoundEvent);
+        eventSource.addEventListener('modelSwitch', handleModelSwitchEvent);
         eventSource.onerror = (error) => {
             console.error('Live2D SSE connection error', error);
         };
@@ -328,14 +466,14 @@ export const Live2DComponent: React.FC = () => {
             eventSource.removeEventListener('action', handleActionEvent);
             eventSource.removeEventListener('expression', handleExpressionEvent);
             eventSource.removeEventListener('sound', handleSoundEvent);
+            eventSource.removeEventListener('modelSwitch', handleModelSwitchEvent);
             eventSource.close();
             eventSourceRef.current = null;
         };
-    }, []);
+    }, [handleModelSwitch]);
 
     return (
         <>
-            <VersionBadge />
             <canvas
                 ref={canvasRef}
                 style={{ width: '100vw', height: '100vh' }}
@@ -345,6 +483,7 @@ export const Live2DComponent: React.FC = () => {
                 onPlayAction={handlePlayAction}
                 onPlayExpression={handlePlayExpression}
                 onPlaySound={handlePlaySound}
+                onModelSwitch={(modelName) => console.log('[ActionPanel] Model switch requested:', modelName)}
             />
         </>
     );
