@@ -85,8 +85,13 @@ export const Live2DComponent: React.FC = () => {
             motionGroup = motionGroup.replace('@', '');
         }
 
+        // For VTuber Studio models, try motion by file name first, then fall back to group
         modelRef.current.motion(motionGroup, undefined, 3).catch((err) => {
-            console.error('Failed to play motion:', err);
+            console.warn(`Motion playback failed for group "${motionGroup}":`, err);
+            // Try to play by index 0 of the group as fallback
+            modelRef.current?.motion(motionGroup, 0, 3).catch((err2) => {
+                console.error('Motion playback failed completely:', err2);
+            });
         });
 
         if (sound) {
@@ -99,7 +104,14 @@ export const Live2DComponent: React.FC = () => {
                 console.warn('Cannot resolve model name for audio playback yet');
                 return;
             }
-            const audio = new Audio(`/Resources/${modelNameForAssets}/${sound}`);
+
+            // Determine correct path based on model metadata
+            const isCommercialModel = modelNameForAssets === '英伦兔兔'; // Can be enhanced later
+            const basePath = isCommercialModel
+                ? `/Resources/Commercial_models/${modelNameForAssets}`
+                : `/Resources/${modelNameForAssets}`;
+
+            const audio = new Audio(`${basePath}/${sound}`);
             audioRef.current = audio;
             audio.play().catch((err) => {
                 console.error('Failed to play sound:', err);
@@ -113,8 +125,15 @@ export const Live2DComponent: React.FC = () => {
             return;
         }
 
+        // Try to play expression - pixi-live2d-display will handle both by name and by file
         modelRef.current.expression(expression).catch((err) => {
-            console.error('Failed to play expression:', err);
+            console.warn(`Expression playback failed for "${expression}":`, err);
+            // For VTuber Studio models, try with .exp3.json extension if not included
+            if (!expression.endsWith('.exp3.json')) {
+                modelRef.current?.expression(`${expression}.exp3.json`).catch((err2) => {
+                    console.error('Expression playback failed completely:', err2);
+                });
+            }
         });
     }, []);
 
@@ -129,7 +148,14 @@ export const Live2DComponent: React.FC = () => {
             console.warn('Cannot resolve model name for audio playback yet');
             return;
         }
-        const audio = new Audio(`/Resources/${modelNameForAssets}/${sound}`);
+
+        // Determine correct path based on model metadata
+        const isCommercialModel = modelNameForAssets === '英伦兔兔'; // Can be enhanced later
+        const basePath = isCommercialModel
+            ? `/Resources/Commercial_models/${modelNameForAssets}`
+            : `/Resources/${modelNameForAssets}`;
+
+        const audio = new Audio(`${basePath}/${sound}`);
         audioRef.current = audio;
         audio.play().catch((err) => {
             console.error('Failed to play sound:', err);

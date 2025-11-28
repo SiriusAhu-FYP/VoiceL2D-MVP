@@ -397,30 +397,34 @@ export class Live2DStateManager {
       // Auto-scan for motion files in root directory (VTuber Studio style)
       const files = readdirSync(modelPath);
 
+      // Track which files we've already added from model3.json
+      const existingMotionFiles = new Set(motions.map(m => m.file));
+      const existingExpressionFiles = new Set(expressions.map(e => e.file));
+
       files.forEach((file) => {
         const filePath = join(modelPath, file);
         if (statSync(filePath).isFile()) {
           // Scan for motion files
           if (file.endsWith('.motion3.json')) {
-            const motionName = file.replace('.motion3.json', '');
             // Avoid duplicates from model3.json
-            if (!motions.some(m => m.file === file)) {
+            if (!existingMotionFiles.has(file)) {
+              const motionName = file.replace('.motion3.json', '');
               motions.push({
-                group: 'VTuberStudio',
+                group: motionName, // Use file name as group for VTuber Studio
                 name: motionName,
-                file: file,
+                file: file, // Store just the filename, not the full path
               });
             }
           }
 
           // Scan for expression files
           if (file.endsWith('.exp3.json')) {
-            const expressionName = file.replace('.exp3.json', '');
             // Avoid duplicates from model3.json
-            if (!expressions.some(e => e.file === file)) {
+            if (!existingExpressionFiles.has(file)) {
+              const expressionName = file.replace('.exp3.json', '');
               expressions.push({
                 name: expressionName,
-                file: file,
+                file: file, // Store just the filename, not the full path
               });
             }
           }
@@ -435,6 +439,8 @@ export class Live2DStateManager {
       } catch (vtubeError) {
         console.warn(`Warning: Could not parse ${vtubeJsonPath}:`, vtubeError);
       }
+
+      console.log(`[VTuber Studio] Loaded model "${modelName}": ${motions.length} motions, ${expressions.length} expressions`);
 
       return { motions, expressions, sounds };
     } catch (error) {
