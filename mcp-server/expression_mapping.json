@@ -1,0 +1,45 @@
+{
+    "英伦兔兔": {
+        "neutral": [
+            "123"
+        ],
+        "happy": [
+            "star",
+            "Cat face"
+        ],
+        "sad": [
+            "Crazy",
+            "Sluggish"
+        ],
+        "surprise": [
+            "Sluggish",
+            "Love"
+        ],
+        "speechless": [
+            "perspire",
+            "Silly"
+        ],
+        "angry": [
+            "Black",
+            "angry"
+        ]
+    },
+    "Haru": {
+        "neutral": [
+            "F01"
+        ],
+        "happy": [
+            "F02"
+        ],
+        "sad": [
+            "F04",
+            "F08"
+        ],
+        "surprise": [
+            "F03"
+        ],
+        "speechless": [
+            "F06"
+        ]
+    }
+}

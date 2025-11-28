@@ -7,9 +7,13 @@ from fastmcp import FastMCP
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
+from utils import execute_expression_by_emotion, get_controller
 
 mcp = FastMCP("Voice2D MVP MCP Server")
 frontend_url = "http://localhost:7788"
+
+# Initialize controller at startup
+controller = get_controller(frontend_url)
 
 
 class AcceptHeaderFriendlyMiddleware(BaseHTTPMiddleware):
@@ -177,6 +181,42 @@ def play_random_combo():
         f"Random combo -> motion: {motion.get('group')}, "
         f"expression: {expression.get('name')}, sound: {sound}"
     )
+
+
+@mcp.tool
+def play_expression(emotion: str):
+    """
+    Play an expression based on abstract emotion category.
+
+    This tool maps abstract emotions to model-specific expression IDs and plays them.
+    If the current model is not in the mapping, falls back to random expression.
+
+    Supported emotion categories:
+    - "angry": Angry, frustrated, annoyed
+    - "neutral": Calm, peaceful, default state
+    - "happy": Excited, joyful, celebrating
+    - "sad": Sad, regretful, comforting
+    - "surprise": Surprised, shocked, unexpected
+    - "speechless": Speechless, awkward, embarrassed, helpless, sarcastic
+
+    Examples:
+    - play_expression("happy") - Play a happy expression
+    - play_expression("sad") - Play a sad expression
+    - play_expression("speechless") - Play a speechless/awkward expression
+
+    The system automatically:
+    1. Detects the current Live2D model
+    2. Maps the emotion to appropriate expression(s) for that model
+    3. Randomly selects one if multiple options exist
+    4. Falls back to random expression if model is not mapped
+
+    Args:
+        emotion: One of: neutral, happy, sad, surprise, speechless
+
+    Returns:
+        Status message indicating success or failure
+    """
+    return execute_expression_by_emotion(emotion, frontend_url)
 
 
 if __name__ == "__main__":
