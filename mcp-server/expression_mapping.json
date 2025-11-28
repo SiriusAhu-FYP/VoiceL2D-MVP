@@ -5,19 +5,23 @@
         ],
         "happy": [
             "star",
-            "Cat face",
-            "Love"
+            "Cat face"
         ],
         "sad": [
-            "Black",
-            "Crazy"
+            "Crazy",
+            "Sluggish"
         ],
         "surprise": [
-            "Sluggish"
+            "Sluggish",
+            "Love"
         ],
         "speechless": [
             "perspire",
             "Silly"
+        ],
+        "angry": [
+            "Black",
+            "angry"
         ]
     },
     "Haru": {
