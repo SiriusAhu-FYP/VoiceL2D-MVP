@@ -42,7 +42,7 @@ If first time using, make sure to install dependencies first:
 - [ ] Connection to backend API
     - [x] A simple UI layout
     - [ ] A display area for text responses received from the backend
-    - [ ] Connection to play audio responses received from the backend
+    - [x] Connection to play audio responses received from the backend
     - [ ] Avalidation of voice input recording and sending to backend
 - [x] `Cubism` model integration
 
