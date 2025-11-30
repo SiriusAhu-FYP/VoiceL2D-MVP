@@ -18,3 +18,6 @@ tmp*
 # Commercial Live2D models
 frontend/public/Resources/Commercial_models/*
 !frontend/public/Resources/Commercial_models/place_commercial_model_folders_here
+
+# Voice output
+voice_output/*
