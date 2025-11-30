@@ -199,11 +199,6 @@ def play_expression(emotion: str):
     - "surprise": Surprised, shocked, unexpected
     - "speechless": Speechless, awkward, embarrassed, helpless, sarcastic
 
-    Examples:
-    - play_expression("happy") - Play a happy expression
-    - play_expression("sad") - Play a sad expression
-    - play_expression("speechless") - Play a speechless/awkward expression
-
     The system automatically:
     1. Detects the current Live2D model
     2. Maps the emotion to appropriate expression(s) for that model
