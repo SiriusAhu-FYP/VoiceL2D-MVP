@@ -107,6 +107,10 @@ export const Live2DComponent: React.FC = () => {
     const targetMouthValueRef = useRef<number>(0);
     const wsRef = useRef<WebSocket | null>(null);
     const lipSyncHandlerRef = useRef<(() => void) | null>(null);
+    const expressionResetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    // Expression auto-reset configuration
+    const EXPRESSION_RESET_DELAY = 10000; // 10 seconds
 
     // Helper function to get model resource base path
     const getModelBasePath = useCallback(async (modelName: string): Promise<string> => {
@@ -509,12 +513,38 @@ export const Live2DComponent: React.FC = () => {
             return;
         }
 
+        // Clear any existing reset timeout
+        if (expressionResetTimeoutRef.current) {
+            clearTimeout(expressionResetTimeoutRef.current);
+            expressionResetTimeoutRef.current = null;
+        }
+
         // Try to play expression - pixi-live2d-display will handle both by name and by file
-        modelRef.current.expression(expression).catch((err) => {
+        modelRef.current.expression(expression).then(() => {
+            console.log(`[Expression] Playing: ${expression}`);
+
+            // Set timeout to reset expression after 10 seconds
+            expressionResetTimeoutRef.current = setTimeout(() => {
+                if (modelRef.current?.internalModel?.motionManager?.expressionManager) {
+                    console.log('[Expression] Resetting to default after timeout');
+                    modelRef.current.internalModel.motionManager.expressionManager.resetExpression();
+                }
+                expressionResetTimeoutRef.current = null;
+            }, EXPRESSION_RESET_DELAY);
+        }).catch((err) => {
             console.warn(`Expression playback failed for "${expression}":`, err);
             // For VTuber Studio models, try with .exp3.json extension if not included
             if (!expression.endsWith('.exp3.json')) {
-                modelRef.current?.expression(`${expression}.exp3.json`).catch((err2) => {
+                modelRef.current?.expression(`${expression}.exp3.json`).then(() => {
+                    // Set timeout for fallback expression too
+                    expressionResetTimeoutRef.current = setTimeout(() => {
+                        if (modelRef.current?.internalModel?.motionManager?.expressionManager) {
+                            console.log('[Expression] Resetting to default after timeout');
+                            modelRef.current.internalModel.motionManager.expressionManager.resetExpression();
+                        }
+                        expressionResetTimeoutRef.current = null;
+                    }, EXPRESSION_RESET_DELAY);
+                }).catch((err2) => {
                     console.error('Expression playback failed completely:', err2);
                 });
             }
@@ -560,6 +590,12 @@ export const Live2DComponent: React.FC = () => {
                 if (lipSyncHandlerRef.current) {
                     modelRef.current.internalModel.off('beforeModelUpdate', lipSyncHandlerRef.current);
                     lipSyncHandlerRef.current = null;
+                }
+
+                // Clear expression reset timeout
+                if (expressionResetTimeoutRef.current) {
+                    clearTimeout(expressionResetTimeoutRef.current);
+                    expressionResetTimeoutRef.current = null;
                 }
 
                 if (idleRestoreRef.current) {
@@ -761,6 +797,12 @@ export const Live2DComponent: React.FC = () => {
             // Cleanup lip sync
             if (lipSyncHandlerRef.current && modelRef.current) {
                 modelRef.current.internalModel.off('beforeModelUpdate', lipSyncHandlerRef.current);
+            }
+
+            // Cleanup expression reset timeout
+            if (expressionResetTimeoutRef.current) {
+                clearTimeout(expressionResetTimeoutRef.current);
+                expressionResetTimeoutRef.current = null;
             }
 
             if (audioContextRef.current) {
