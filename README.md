@@ -52,4 +52,5 @@ If first time using, make sure to install dependencies first:
     - [x] Make LLM understand more complex commands
 
 - [ ] Define more Personas
+- [ ] Use `Loguru` for logging
 ...
