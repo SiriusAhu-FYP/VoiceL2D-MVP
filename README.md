@@ -47,8 +47,9 @@ If first time using, make sure to install dependencies first:
 - [x] `Cubism` model integration
 
 ### Advanced
-- [ ] Define commands to control Live2D model
-    - [ ] Basic commands
-    - [ ] Make LLM understand more complex commands
+- [x] Define commands to control Live2D model
+    - [x] Basic commands
+    - [x] Make LLM understand more complex commands
 
+- [ ] Define more Personas
 ...
