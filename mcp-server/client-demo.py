@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 from fastmcp import Client
@@ -23,6 +24,23 @@ class UniversalBlindTester:
         # Initialize FastMCP Client
         # 它会自动处理 HTTP 连接和协议握手
         self.client = Client(MCP_SERVER_URL)
+        # Load system prompt
+        self.system_prompt = self._load_system_prompt()
+
+    def _load_system_prompt(self) -> str:
+        """Load system prompt from system_prompt.md file."""
+        system_prompt_path = Path(__file__).parent / "system_prompt.md"
+        try:
+            with open(system_prompt_path, "r", encoding="utf-8") as f:
+                content = f.read().strip()
+                print(f"✅ Loaded system prompt from {system_prompt_path}")
+                return content
+        except FileNotFoundError:
+            print(f"⚠️ Warning: system_prompt.md not found at {system_prompt_path}")
+            return ""
+        except Exception as e:
+            print(f"⚠️ Warning: Failed to load system prompt: {e}")
+            return ""
 
     def _adapt_tools(self, tools):
         """
@@ -63,7 +81,11 @@ class UniversalBlindTester:
                 if user_query.lower() in ["q", "quit"]:
                     break
 
-                messages = [{"role": "user", "content": user_query}]
+                # Build messages with system prompt if available
+                messages = []
+                if self.system_prompt:
+                    messages.append({"role": "system", "content": self.system_prompt})
+                messages.append({"role": "user", "content": user_query})
 
                 # === Step 1: LLM thinking ===
                 response = self.llm.chat.completions.create(
@@ -122,6 +144,7 @@ class UniversalBlindTester:
                             })
 
                     # === Step 3: LLM summary ===
+                    # messages already contains system prompt from Step 1, so use it directly
                     final_res = self.llm.chat.completions.create(
                         model=MODEL_NAME, messages=messages, tools=llm_tools_config
                     )
