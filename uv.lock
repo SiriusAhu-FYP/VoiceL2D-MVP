@@ -1655,6 +1655,7 @@ dependencies = [
     { name = "requests" },
     { name = "ruff" },
     { name = "simpleaudio" },
+    { name = "websockets" },
 ]
 
 [package.metadata]
@@ -1666,6 +1667,7 @@ requires-dist = [
     { name = "requests", specifier = ">=2.32.5" },
     { name = "ruff", specifier = ">=0.14.6" },
     { name = "simpleaudio", specifier = ">=1.0.4" },
+    { name = "websockets", specifier = ">=12.0" },
 ]
 
 [[package]]

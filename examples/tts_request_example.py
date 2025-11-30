@@ -15,7 +15,9 @@ prompt_lang = "zh"
 # === 1. 加载两个权重 ===
 gpt_weights_url = f"http://192.168.31.64:9880/set_gpt_weights"
 get_weights_payload = {"weights_path": gpt_weights_path}
-gpt_weights_response = requests.post(gpt_weights_url, params=get_weights_payload)
+gpt_weights_response = requests.get(
+    gpt_weights_url, params=get_weights_payload
+)  # 虽然很反直觉，但是API作者那边就是这么写的😅
 print(
     "GPT weights set successfully"
 ) if gpt_weights_response.status_code == 200 else print(
@@ -24,7 +26,9 @@ print(
 
 sovits_weights_url = f"http://192.168.31.64:9880/set_sovits_weights"
 get_weights_payload = {"weights_path": sovits_weights_path}
-sovits_weights_response = requests.post(sovits_weights_url, params=get_weights_payload)
+sovits_weights_response = requests.get(
+    sovits_weights_url, params=get_weights_payload
+)  # 虽然很反直觉，但是API作者那边就是这么写的😅
 print(
     "SoVITS weights set successfully"
 ) if sovits_weights_response.status_code == 200 else print(

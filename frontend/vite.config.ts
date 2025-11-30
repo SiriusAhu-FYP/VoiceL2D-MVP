@@ -3,6 +3,8 @@ import react from '@vitejs/plugin-react-swc'
 import type { ServerResponse } from 'http'
 import { live2dStateManager } from './server/live2dState'
 import type { ResourcesData } from './src/api/live2d-api'
+import { readFileSync, existsSync } from 'fs'
+import { join } from 'path'
 
 const sendJson = (res: ServerResponse, payload: unknown, status = 200) => {
   res.statusCode = status
@@ -35,6 +37,28 @@ export default defineConfig({
         server.middlewares.use((req, res, next) => {
           const url = req.url || ''
           const pathname = url.split('?')[0]
+
+          // Serve asset files from parent directory
+          if (req.method === 'GET' && pathname.startsWith('/asset/')) {
+            const assetPath = join(__dirname, '..', pathname)
+            if (existsSync(assetPath)) {
+              const content = readFileSync(assetPath)
+              const ext = pathname.split('.').pop()?.toLowerCase()
+              const mimeTypes: Record<string, string> = {
+                'wav': 'audio/wav',
+                'mp3': 'audio/mpeg',
+                'ogg': 'audio/ogg',
+                'png': 'image/png',
+                'jpg': 'image/jpeg',
+                'jpeg': 'image/jpeg',
+              }
+              res.statusCode = 200
+              res.setHeader('Content-Type', mimeTypes[ext || ''] || 'application/octet-stream')
+              res.setHeader('Access-Control-Allow-Origin', '*')
+              res.end(content)
+              return
+            }
+          }
 
           if (req.method === 'GET' && pathname === '/api/live2d/events') {
             res.writeHead(200, {

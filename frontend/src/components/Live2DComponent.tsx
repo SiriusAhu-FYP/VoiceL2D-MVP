@@ -4,6 +4,7 @@ import { Live2DModel } from 'pixi-live2d-display/cubism4';
 import { startUpCubism4, cubism4Ready } from 'pixi-live2d-display/cubism4';
 import { ActionPanel } from './ActionPanel';
 import { updateCurrentModelState, getActions, getModelPath } from '../api/live2d-api';
+import testAudioUrl from '../assets/test_audio.wav';
 
 type Live2DCubismCoreGlobal = {
     LogLevel_Verbose?: number;
@@ -21,8 +22,30 @@ type SSECallbacks = {
     playSound: (sound: string) => void;
 };
 
+// WebSocket URL for audio from Python client
+const AUDIO_WS_URL = 'ws://localhost:7789';
+
 const live2dWindow = window as Live2DWindow;
 live2dWindow.PIXI = PIXI;
+
+// Lip sync configuration - optimized for larger mouth movements
+const LIP_SYNC_CONFIG = {
+    // Smoothing factors (lower = faster response)
+    openSmoothing: 0.5,
+
+    // Volume thresholds - lowered for more sensitivity
+    minVolume: 0.005,
+    maxVolume: 0.15,
+
+    // Amplification for larger movements
+    amplification: 2.5,
+
+    // Live2D parameter IDs for mouth
+    mouthOpenParam: 'ParamMouthOpenY',
+
+    // Update rate
+    updateRate: 60,
+};
 
 const waitForLive2DCore = (): Promise<void> => {
     return new Promise((resolve, reject) => {
@@ -72,7 +95,18 @@ export const Live2DComponent: React.FC = () => {
         playSound: noopSound,
     });
     const [currentModel, setCurrentModel] = useState<string>('');
+    const [isPlaying, setIsPlaying] = useState<boolean>(false);
     const audioRef = useRef<HTMLAudioElement | null>(null);
+
+    // Lip sync refs
+    const audioContextRef = useRef<AudioContext | null>(null);
+    const analyserRef = useRef<AnalyserNode | null>(null);
+    const sourceNodeRef = useRef<MediaElementAudioSourceNode | null>(null);
+    const lipSyncActiveRef = useRef<boolean>(false);
+    const currentMouthValueRef = useRef<number>(0);
+    const targetMouthValueRef = useRef<number>(0);
+    const wsRef = useRef<WebSocket | null>(null);
+    const lipSyncHandlerRef = useRef<(() => void) | null>(null);
 
     // Helper function to get model resource base path
     const getModelBasePath = useCallback(async (modelName: string): Promise<string> => {
@@ -95,6 +129,335 @@ export const Live2DComponent: React.FC = () => {
         modelPathCacheRef.current.set(modelName, defaultPath);
         return defaultPath;
     }, []);
+
+    // Initialize audio context for lip sync
+    const initAudioContext = useCallback(() => {
+        if (!audioContextRef.current) {
+            audioContextRef.current = new AudioContext();
+            analyserRef.current = audioContextRef.current.createAnalyser();
+            analyserRef.current.fftSize = 256;
+            analyserRef.current.smoothingTimeConstant = 0.5;
+            console.log('[LipSync] Audio context initialized');
+        }
+        return audioContextRef.current;
+    }, []);
+
+    // Get current volume from audio analyser
+    const getCurrentVolume = useCallback((): number => {
+        if (!analyserRef.current) return 0;
+
+        const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
+        analyserRef.current.getByteFrequencyData(dataArray);
+
+        // Calculate RMS volume from frequency data
+        let sum = 0;
+        for (let i = 0; i < dataArray.length; i++) {
+            sum += dataArray[i] * dataArray[i];
+        }
+        const rms = Math.sqrt(sum / dataArray.length) / 255;
+
+        return rms;
+    }, []);
+
+    // Setup lip sync handler that hooks into model's update cycle
+    const setupLipSyncHandler = useCallback(() => {
+        if (!modelRef.current) return;
+
+        // Remove existing handler
+        if (lipSyncHandlerRef.current) {
+            modelRef.current.internalModel.off('beforeModelUpdate', lipSyncHandlerRef.current);
+        }
+
+        // Create new handler that updates mouth parameter during model update
+        const handler = () => {
+            if (!lipSyncActiveRef.current || !modelRef.current) return;
+
+            // Get current audio volume
+            const volume = getCurrentVolume();
+
+            // Normalize and amplify volume
+            let normalizedVolume = Math.min(
+                Math.max((volume - LIP_SYNC_CONFIG.minVolume) / (LIP_SYNC_CONFIG.maxVolume - LIP_SYNC_CONFIG.minVolume), 0),
+                1
+            );
+
+            // Apply amplification
+            normalizedVolume = Math.min(normalizedVolume * LIP_SYNC_CONFIG.amplification, 1);
+
+            // Set target value
+            targetMouthValueRef.current = normalizedVolume;
+
+            // Smooth transition
+            currentMouthValueRef.current += (targetMouthValueRef.current - currentMouthValueRef.current) * LIP_SYNC_CONFIG.openSmoothing;
+
+            // Apply to model using the correct API
+            try {
+                const internalModel = modelRef.current.internalModel;
+                const coreModel = (internalModel as {
+                    coreModel?: {
+                        setParameterValueById: (id: string, value: number, weight?: number) => void;
+                        getParameterIndex: (id: string) => number;
+                        setParameterValueByIndex: (index: number, value: number, weight?: number) => void;
+                    }
+                })?.coreModel;
+
+                if (coreModel) {
+                    // Try to set parameter by ID first
+                    const paramIndex = coreModel.getParameterIndex(LIP_SYNC_CONFIG.mouthOpenParam);
+                    if (paramIndex >= 0) {
+                        coreModel.setParameterValueByIndex(paramIndex, currentMouthValueRef.current, 1.0);
+                    } else {
+                        // Fallback to setParameterValueById
+                        coreModel.setParameterValueById(LIP_SYNC_CONFIG.mouthOpenParam, currentMouthValueRef.current, 1.0);
+                    }
+                }
+            } catch (err) {
+                // Log error once
+                if (currentMouthValueRef.current > 0.1) {
+                    console.warn('[LipSync] Failed to set mouth parameter:', err);
+                }
+            }
+        };
+
+        lipSyncHandlerRef.current = handler;
+        modelRef.current.internalModel.on('beforeModelUpdate', handler);
+        console.log('[LipSync] Handler attached to model');
+    }, [getCurrentVolume]);
+
+    // Start lip sync
+    const startLipSync = useCallback(() => {
+        lipSyncActiveRef.current = true;
+        setupLipSyncHandler();
+        console.log('[LipSync] Started');
+    }, [setupLipSyncHandler]);
+
+    // Stop lip sync
+    const stopLipSync = useCallback(() => {
+        lipSyncActiveRef.current = false;
+
+        // Smoothly close mouth
+        const closeInterval = setInterval(() => {
+            currentMouthValueRef.current *= 0.7;
+            if (currentMouthValueRef.current < 0.01) {
+                currentMouthValueRef.current = 0;
+                targetMouthValueRef.current = 0;
+                clearInterval(closeInterval);
+            }
+        }, 16);
+
+        console.log('[LipSync] Stopped');
+    }, []);
+
+    // Connect audio element to analyser for lip sync
+    const connectAudioToAnalyser = useCallback((audioElement: HTMLAudioElement) => {
+        const ctx = initAudioContext();
+
+        // Resume context if suspended (browser autoplay policy)
+        if (ctx.state === 'suspended') {
+            ctx.resume();
+        }
+
+        // Create source node if not exists
+        if (!sourceNodeRef.current) {
+            try {
+                sourceNodeRef.current = ctx.createMediaElementSource(audioElement);
+                sourceNodeRef.current.connect(analyserRef.current!);
+                analyserRef.current!.connect(ctx.destination);
+                console.log('[LipSync] Audio connected to analyser');
+            } catch (err) {
+                console.warn('[LipSync] Could not create media element source:', err);
+            }
+        }
+    }, [initAudioContext]);
+
+    // Play audio with lip sync
+    const playAudioWithLipSync = useCallback(async (audioUrl: string): Promise<void> => {
+        return new Promise((resolve, reject) => {
+            // Stop any existing audio
+            if (audioRef.current) {
+                audioRef.current.pause();
+                audioRef.current.currentTime = 0;
+            }
+
+            setIsPlaying(true);
+
+            const audio = new Audio(audioUrl);
+            audioRef.current = audio;
+
+            // Connect to analyser before playing
+            connectAudioToAnalyser(audio);
+
+            audio.onplay = () => {
+                startLipSync();
+            };
+
+            audio.onended = () => {
+                stopLipSync();
+                setIsPlaying(false);
+                resolve();
+            };
+
+            audio.onerror = (err) => {
+                stopLipSync();
+                setIsPlaying(false);
+                reject(err);
+            };
+
+            audio.play().catch((err) => {
+                stopLipSync();
+                setIsPlaying(false);
+                reject(err);
+            });
+        });
+    }, [connectAudioToAnalyser, startLipSync, stopLipSync]);
+
+    // Handle test lip sync with default audio
+    const handleTestLipSync = useCallback(async () => {
+        if (isPlaying) {
+            console.log('[LipSync] Already playing, ignoring request');
+            return;
+        }
+
+        console.log('[LipSync] Testing with default audio');
+        try {
+            await playAudioWithLipSync(testAudioUrl);
+            console.log('[LipSync] Test completed');
+        } catch (err) {
+            console.error('[LipSync] Test failed:', err);
+        }
+    }, [isPlaying, playAudioWithLipSync]);
+
+    // Audio queue for sequential playback
+    const playbackQueueRef = useRef<{ audioData: string; text: string }[]>([]);
+    const isPlayingQueueRef = useRef<boolean>(false);
+
+    // Play audio from base64 data with lip sync
+    const playBase64Audio = useCallback(async (audioData: string, text: string): Promise<void> => {
+        return new Promise(async (resolve, reject) => {
+            try {
+                const ctx = initAudioContext();
+                if (ctx.state === 'suspended') {
+                    await ctx.resume();
+                }
+
+                // Decode base64 to ArrayBuffer
+                const binaryString = atob(audioData);
+                const bytes = new Uint8Array(binaryString.length);
+                for (let i = 0; i < binaryString.length; i++) {
+                    bytes[i] = binaryString.charCodeAt(i);
+                }
+
+                // Decode audio data
+                const audioBuffer = await ctx.decodeAudioData(bytes.buffer);
+                const source = ctx.createBufferSource();
+                source.buffer = audioBuffer;
+
+                // Connect to analyser for lip sync
+                source.connect(analyserRef.current!);
+                analyserRef.current!.connect(ctx.destination);
+
+                setIsPlaying(true);
+                startLipSync();
+
+                source.onended = () => {
+                    stopLipSync();
+                    setIsPlaying(false);
+                    resolve();
+                };
+
+                source.start();
+                console.log('[AudioWS] Playing audio for:', text.substring(0, 30));
+            } catch (err) {
+                console.error('[AudioWS] Failed to play audio:', err);
+                stopLipSync();
+                setIsPlaying(false);
+                reject(err);
+            }
+        });
+    }, [initAudioContext, startLipSync, stopLipSync]);
+
+    // Process playback queue sequentially
+    const processPlaybackQueue = useCallback(async () => {
+        if (isPlayingQueueRef.current) return;
+        if (playbackQueueRef.current.length === 0) return;
+
+        isPlayingQueueRef.current = true;
+
+        while (playbackQueueRef.current.length > 0) {
+            const item = playbackQueueRef.current.shift();
+            if (item) {
+                try {
+                    await playBase64Audio(item.audioData, item.text);
+                    // 0.5 second delay between segments as requested
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                } catch (err) {
+                    console.error('[AudioWS] Error in playback queue:', err);
+                }
+            }
+        }
+
+        isPlayingQueueRef.current = false;
+
+        // Notify server that playback is complete
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+            wsRef.current.send(JSON.stringify({ type: 'playback_complete' }));
+        }
+    }, [playBase64Audio]);
+
+    // Setup WebSocket connection for audio
+    const setupAudioWebSocket = useCallback(() => {
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+            return;
+        }
+
+        console.log('[AudioWS] Connecting to', AUDIO_WS_URL);
+        const ws = new WebSocket(AUDIO_WS_URL);
+
+        ws.onopen = () => {
+            console.log('[AudioWS] Connected');
+            ws.send(JSON.stringify({ type: 'ready' }));
+        };
+
+        ws.onmessage = async (event) => {
+            try {
+                const msg = JSON.parse(event.data);
+
+                if (msg.type === 'connected') {
+                    console.log('[AudioWS] Received welcome message');
+                } else if (msg.type === 'audio') {
+                    // Received audio data - add to queue
+                    console.log('[AudioWS] Received audio for:', msg.text?.substring(0, 30));
+                    playbackQueueRef.current.push({
+                        audioData: msg.audio_data,
+                        text: msg.text || '',
+                    });
+                    // Start processing queue if not already
+                    processPlaybackQueue();
+                } else if (msg.type === 'pong') {
+                    // Heartbeat response
+                }
+            } catch (err) {
+                console.error('[AudioWS] Failed to parse message:', err);
+            }
+        };
+
+        ws.onerror = (err) => {
+            console.error('[AudioWS] Error:', err);
+        };
+
+        ws.onclose = () => {
+            console.log('[AudioWS] Disconnected');
+            wsRef.current = null;
+            // Attempt reconnect after delay
+            setTimeout(() => {
+                if (!wsRef.current) {
+                    setupAudioWebSocket();
+                }
+            }, 5000);
+        };
+
+        wsRef.current = ws;
+    }, [processPlaybackQueue]);
 
     const handlePlayAction = useCallback((action: string, sound?: string) => {
         if (!modelRef.current) {
@@ -193,6 +556,12 @@ export const Live2DComponent: React.FC = () => {
 
             // Dispose old model
             if (modelRef.current) {
+                // Remove lip sync handler
+                if (lipSyncHandlerRef.current) {
+                    modelRef.current.internalModel.off('beforeModelUpdate', lipSyncHandlerRef.current);
+                    lipSyncHandlerRef.current = null;
+                }
+
                 if (idleRestoreRef.current) {
                     idleRestoreRef.current();
                     idleRestoreRef.current = null;
@@ -244,12 +613,15 @@ export const Live2DComponent: React.FC = () => {
             model.y = appRef.current.screen.height / 2;
             model.scale.set(0.2);
 
+            // Setup lip sync handler for new model
+            setupLipSyncHandler();
+
             console.log('[Live2D] Model switched successfully');
         } catch (error) {
             console.error('[Live2D] Failed to switch model:', error);
             alert(`切换模型失败: ${error instanceof Error ? error.message : '未知错误'}`);
         }
-    }, []);
+    }, [setupLipSyncHandler]);
 
     useEffect(() => {
         sseCallbacksRef.current = {
@@ -385,8 +757,46 @@ export const Live2DComponent: React.FC = () => {
                 idleRestoreRef.current();
                 idleRestoreRef.current = null;
             }
+
+            // Cleanup lip sync
+            if (lipSyncHandlerRef.current && modelRef.current) {
+                modelRef.current.internalModel.off('beforeModelUpdate', lipSyncHandlerRef.current);
+            }
+
+            if (audioContextRef.current) {
+                audioContextRef.current.close();
+                audioContextRef.current = null;
+            }
         };
     }, []);
+
+    // Setup lip sync handler when model is ready
+    useEffect(() => {
+        if (modelRef.current) {
+            setupLipSyncHandler();
+        }
+    }, [currentModel, setupLipSyncHandler]);
+
+    // Setup WebSocket for audio streaming
+    useEffect(() => {
+        // Only setup WebSocket in dev mode
+        if (!import.meta.env.DEV) {
+            return;
+        }
+
+        // Delay WebSocket setup to allow other connections to establish
+        const timer = setTimeout(() => {
+            setupAudioWebSocket();
+        }, 1000);
+
+        return () => {
+            clearTimeout(timer);
+            if (wsRef.current) {
+                wsRef.current.close();
+                wsRef.current = null;
+            }
+        };
+    }, [setupAudioWebSocket]);
 
     useEffect(() => {
         if (!currentModel) {
@@ -484,6 +894,8 @@ export const Live2DComponent: React.FC = () => {
                 onPlayExpression={handlePlayExpression}
                 onPlaySound={handlePlaySound}
                 onModelSwitch={(modelName) => console.log('[ActionPanel] Model switch requested:', modelName)}
+                onTestLipSync={handleTestLipSync}
+                isPlaying={isPlaying}
             />
         </>
     );

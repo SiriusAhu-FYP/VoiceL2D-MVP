@@ -13,6 +13,8 @@ interface ActionPanelProps {
     onPlayExpression?: (expression: string) => void;
     onPlaySound?: (sound: string) => void;
     onModelSwitch?: (modelName: string) => void;
+    onTestLipSync?: () => void; // 测试口型同步回调
+    isPlaying?: boolean; // 是否正在播放音频
 }
 
 export const ActionPanel: React.FC<ActionPanelProps> = ({
@@ -20,7 +22,9 @@ export const ActionPanel: React.FC<ActionPanelProps> = ({
     onPlayAction,
     onPlayExpression,
     onPlaySound,
-    onModelSwitch
+    onModelSwitch,
+    onTestLipSync,
+    isPlaying = false,
 }) => {
     const [isVisible, setIsVisible] = useState(false);
     const [resourcesData, setResourcesData] = useState<ResourcesData | null>(null);
@@ -151,6 +155,31 @@ export const ActionPanel: React.FC<ActionPanelProps> = ({
                             <div className="action-panel-loading">加载中...</div>
                         ) : (
                             <>
+                                {/* 口型测试按钮 */}
+                                <div className="action-section lip-sync-section">
+                                    <h4>口型同步测试</h4>
+                                    <div className="action-buttons">
+                                        <button
+                                            className={`action-button lip-sync-button ${isPlaying ? 'playing' : ''}`}
+                                            onClick={onTestLipSync}
+                                            disabled={isPlaying}
+                                            title={isPlaying ? '正在播放中...' : '点击测试口型同步'}
+                                        >
+                                            {isPlaying ? (
+                                                <>
+                                                    <span className="lip-sync-icon">🔊</span>
+                                                    播放中...
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <span className="lip-sync-icon">🎤</span>
+                                                    测试口型
+                                                </>
+                                            )}
+                                        </button>
+                                    </div>
+                                </div>
+
                                 {/* 动作按钮 */}
                                 {Object.keys(motionsByGroup).length > 0 && (
                                     <div className="action-section">
