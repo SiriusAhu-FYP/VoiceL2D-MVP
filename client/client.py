@@ -1,22 +1,28 @@
 """
-VoiceL2D Client - Main entry point for voice-controlled Live2D.
+VoiceL2D Client - Backend service for voice-controlled Live2D.
 
-This client:
-- Records audio from microphone with VAD detection
-- Transcribes speech using GLM-ASR
+This client runs as a background service that:
+- Listens for commands from the frontend via WebSocket
+- Records audio from microphone with VAD detection (when enabled)
+- Transcribes speech using ASR (GLM-ASR API or Faster-Whisper local)
 - Integrates with LLM for conversation
 - Manages TTS voice generation with sentence-by-sentence synthesis
 - Sends audio and messages to frontend via WebSocket
 - Coordinates with MCP server for Live2D expressions
+
+ASR Mode is controlled via ASR_MODE environment variable:
+- 'api' (default): Uses GLM-ASR cloud API (requires ZHIPU_API_KEY)
+- 'local': Uses Faster-Whisper locally (requires: uv sync --extra local-asr)
+
+No interactive terminal input - all control is via frontend.
 """
 
 import asyncio
 import json
 import os
 import re
-import threading
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import numpy as np
 from dotenv import load_dotenv
@@ -24,13 +30,12 @@ from fastmcp import Client
 from loguru import logger as lg
 from openai import OpenAI
 from utils import (
-    ASRController,
-    AudioBuffer,
     AudioRecorder,
     AudioWebSocketServer,
     ContinuousVAD,
     TTSController,
     VoiceManager,
+    create_asr_controller,
 )
 
 # region ==== Config ====
@@ -70,8 +75,6 @@ def split_into_sentences(text: str, max_segments: int = 2) -> list[str]:
         List of sentences (at most max_segments)
     """
     # Pattern for sentence-ending punctuation (Chinese and English)
-    # Include: 。！？；.!?;
-    # Also handle ellipsis: ...、……
     pattern = r"([。！？；.!?;]+|\.{3}|……)"
 
     # Split but keep delimiters
@@ -85,29 +88,23 @@ def split_into_sentences(text: str, max_segments: int = 2) -> list[str]:
         if not part.strip():
             continue
         current += part
-        # If this part is punctuation, finalize the sentence
         if re.match(pattern, part):
             if current.strip():
                 sentences.append(current.strip())
             current = ""
 
-    # Handle any remaining text without ending punctuation
     if current.strip():
         sentences.append(current.strip())
 
-    # Filter out very short segments (likely just punctuation)
     sentences = [s for s in sentences if len(s) > 1]
 
-    # If we have more than max_segments, merge them
     if len(sentences) > max_segments:
-        # Calculate how many sentences to merge into each segment
         merged = []
         sentences_per_segment = len(sentences) // max_segments
         remainder = len(sentences) % max_segments
 
         idx = 0
         for i in range(max_segments):
-            # Add one extra sentence to first 'remainder' segments
             count = sentences_per_segment + (1 if i < remainder else 0)
             segment = "".join(sentences[idx : idx + count])
             if segment:
@@ -123,12 +120,13 @@ class VoiceL2DClient:
     """
     Main client for VoiceL2D system.
 
-    Orchestrates LLM conversation, TTS generation, ASR transcription,
-    and audio sending to the frontend for Live2D lip sync.
+    Runs as a background service, controlled via WebSocket commands from frontend.
     """
 
     def __init__(self):
         """Initialize the VoiceL2D client."""
+        lg.info("[VoiceL2DClient] Initializing...")
+
         # LLM client
         self.llm = OpenAI(api_key=API_KEY, base_url=BASE_URL)
 
@@ -141,14 +139,14 @@ class VoiceL2DClient:
         # Voice manager
         self.voice_manager = VoiceManager()
 
-        # ASR controller
-        self.asr = ASRController()
+        # ASR controller (auto-selects based on ASR_MODE env var)
+        self.asr = create_asr_controller()
 
         # Audio recorder
         self.recorder = AudioRecorder(
-            sample_rate=16000,  # GLM-ASR requirement
+            sample_rate=16000,
             channels=1,
-            block_size=480,  # 30ms at 16kHz for VAD
+            block_size=480,
         )
 
         # VAD detector
@@ -158,7 +156,7 @@ class VoiceL2DClient:
             silence_threshold=SILENCE_THRESHOLD,
         )
 
-        # WebSocket server for audio
+        # WebSocket server
         self.ws_server = AudioWebSocketServer(WEBSOCKET_HOST, WEBSOCKET_PORT)
 
         # Load system prompt
@@ -167,25 +165,26 @@ class VoiceL2DClient:
         # Conversation history
         self.messages: list[dict] = []
 
-        # Voice caching - track currently loaded voice on TTS server
+        # Voice caching
         self._loaded_voice_name: Optional[str] = None
 
-        # Recording state
+        # Recording state - starts OFF, frontend controls it
         self._is_listening = False
-        # Note: asyncio primitives are created lazily in _ensure_async_primitives()
-        # to avoid "no running event loop" error when client is instantiated
-        # before asyncio.run() is called
+
+        # Asyncio primitives (created lazily)
         self._processing_lock: Optional[asyncio.Lock] = None
         self._text_input_queue: Optional[asyncio.Queue[tuple[str, str]]] = None
 
-        lg.info("[VoiceL2DClient] Initialized")
+        # MCP tools config (set after connection)
+        self._tools_config: Optional[list[dict]] = None
+
+        # Event loop reference (set when run() starts)
+        self._event_loop: Optional[asyncio.AbstractEventLoop] = None
+
+        lg.info("[VoiceL2DClient] Initialized successfully")
 
     def _ensure_async_primitives(self) -> None:
-        """
-        Ensure asyncio primitives are created.
-
-        Must be called from within an async context (after event loop is running).
-        """
+        """Ensure asyncio primitives are created."""
         if self._processing_lock is None:
             self._processing_lock = asyncio.Lock()
         if self._text_input_queue is None:
@@ -197,29 +196,17 @@ class VoiceL2DClient:
         try:
             with open(system_prompt_path, "r", encoding="utf-8") as f:
                 content = f.read().strip()
-                lg.info(
-                    f"[VoiceL2DClient] Loaded system prompt from {system_prompt_path}"
-                )
+                lg.info("[VoiceL2DClient] Loaded system prompt")
                 return content
         except FileNotFoundError:
-            lg.warning(
-                f"[VoiceL2DClient] Warning: system_prompt.md not found at {system_prompt_path}"
-            )
+            lg.warning("[VoiceL2DClient] system_prompt.md not found")
             return ""
         except Exception as e:
-            lg.warning(f"[VoiceL2DClient] Warning: Failed to load system prompt: {e}")
+            lg.warning(f"[VoiceL2DClient] Failed to load system prompt: {e}")
             return ""
 
     def _adapt_tools(self, tools) -> list[dict]:
-        """
-        Convert FastMCP tool objects to OpenAI format.
-
-        Args:
-            tools: List of MCP tool objects
-
-        Returns:
-            List of OpenAI-compatible tool definitions
-        """
+        """Convert FastMCP tool objects to OpenAI format."""
         openai_tools = []
         for tool in tools:
             openai_tools.append({
@@ -233,20 +220,9 @@ class VoiceL2DClient:
         return openai_tools
 
     async def _call_mcp_tool(self, tool_name: str, tool_args: dict) -> str:
-        """
-        Call an MCP tool and return the result.
-
-        Args:
-            tool_name: Name of the tool to call
-            tool_args: Arguments for the tool
-
-        Returns:
-            Tool result as string
-        """
+        """Call an MCP tool and return the result."""
         try:
             result = await self.mcp_client.call_tool(tool_name, arguments=tool_args)
-
-            # Extract text from result
             output_text = ""
             if hasattr(result, "content") and isinstance(result.content, list):
                 for item in result.content:
@@ -256,21 +232,13 @@ class VoiceL2DClient:
                         output_text += str(item)
             else:
                 output_text = str(result)
-
             return output_text
         except Exception as e:
             lg.error(f"[VoiceL2DClient] MCP tool call failed: {e}")
             return f"Error: {str(e)}"
 
     def _ensure_voice_loaded(self) -> bool:
-        """
-        Ensure the current voice is loaded on TTS server.
-
-        Only sends load request if voice has changed.
-
-        Returns:
-            True if voice is ready, False otherwise
-        """
+        """Ensure the current voice is loaded on TTS server."""
         voice_config = self.voice_manager.get_current_voice()
         if not voice_config:
             lg.warning("[VoiceL2DClient] No voice configured")
@@ -278,14 +246,9 @@ class VoiceL2DClient:
 
         current_voice_name = self.voice_manager.current_voice
 
-        # Check if we need to load the voice
         if self._loaded_voice_name == current_voice_name:
-            lg.debug(
-                f"[VoiceL2DClient] Voice '{current_voice_name}' already loaded (cached)"
-            )
             return True
 
-        # Load voice weights
         lg.info(f"[VoiceL2DClient] Loading voice: {current_voice_name}")
         if self.tts.load_voice(voice_config):
             self._loaded_voice_name = current_voice_name
@@ -295,15 +258,7 @@ class VoiceL2DClient:
             return False
 
     async def speak(self, text: str) -> None:
-        """
-        Generate and send TTS audio for the given text.
-
-        Splits text into sentences and processes them sequentially.
-
-        Args:
-            text: Text to speak
-        """
-        # Ensure voice is loaded
+        """Generate and send TTS audio for the given text."""
         if not self._ensure_voice_loaded():
             return
 
@@ -311,160 +266,103 @@ class VoiceL2DClient:
         if not voice_config:
             return
 
-        # Split text into sentences
         sentences = split_into_sentences(text)
-
         if not sentences:
             lg.warning("[VoiceL2DClient] No sentences to speak")
             return
 
         lg.info(f"[VoiceL2DClient] Speaking {len(sentences)} sentence(s)")
-
-        # Update status
         await self.ws_server.send_status("speaking")
 
-        # Process each sentence sequentially
         for i, sentence in enumerate(sentences):
-            lg.debug(
-                f"[VoiceL2DClient] Sentence {i + 1}/{len(sentences)}: {sentence[:30]}..."
-            )
-
-            # Generate audio for this sentence (non-streaming)
+            lg.debug(f"[VoiceL2DClient] TTS: {sentence[:30]}...")
             audio_data = self.tts.generate_audio(sentence, voice_config)
 
             if audio_data:
-                # Send audio to frontend via WebSocket
                 await self.ws_server.send_audio(audio_data, sentence)
-
-                # 0.5 second delay between sentences for natural pacing
                 if i < len(sentences) - 1:
                     await asyncio.sleep(0.5)
             else:
-                lg.error(
-                    f"[VoiceL2DClient] Failed to generate audio for sentence {i + 1}"
-                )
+                lg.error(f"[VoiceL2DClient] TTS failed for sentence {i + 1}")
 
-        # Update status
         await self.ws_server.send_status("idle")
 
+    def get_voices_info(self) -> list[dict[str, Any]]:
+        """Get list of available voices with their info."""
+        voices = []
+        for voice_name in self.voice_manager.list_voices():
+            info = self.voice_manager.get_voice_info(voice_name)
+            if info:
+                voices.append({
+                    "name": info["name"],
+                    "prompt_text": info["prompt_text"],
+                    "is_current": voice_name == self.voice_manager.current_voice,
+                })
+        return voices
+
     def switch_voice(self, voice_name: str) -> bool:
-        """
-        Switch to a different TTS voice.
-
-        Args:
-            voice_name: Name of the voice to switch to
-
-        Returns:
-            True if successful, False otherwise
-        """
+        """Switch to a different TTS voice."""
         if self.voice_manager.set_current_voice(voice_name):
-            # Note: Actual loading will happen on next speak() call
-            # This just marks the voice as needing to be loaded
             if self._loaded_voice_name != voice_name:
-                lg.info(
-                    f"[VoiceL2DClient] Voice will be loaded on next speak: {voice_name}"
-                )
+                lg.info(f"[VoiceL2DClient] Voice switched to: {voice_name}")
             return True
         return False
 
-    def list_voices(self) -> list[str]:
-        """
-        List available TTS voices.
-
-        Returns:
-            List of voice names
-        """
-        return self.voice_manager.list_voices()
-
     async def process_user_input(
-        self, text: str, source: str = "text", tools_config: Optional[list[dict]] = None
+        self, text: str, source: str = "text"
     ) -> Optional[str]:
-        """
-        Process user input (from voice or text) and generate response.
-
-        Args:
-            text: User's input text
-            source: Input source ('voice' or 'text')
-            tools_config: Optional tool configuration for MCP
-
-        Returns:
-            AI's response text
-        """
+        """Process user input and generate response."""
         self._ensure_async_primitives()
         assert self._processing_lock is not None
+
         async with self._processing_lock:
-            # Send user message to frontend
             await self.ws_server.send_user_message(text, source)
             await self.ws_server.send_status("processing")
 
-            # Generate response
-            if tools_config:
-                response = await self.chat_with_tools(text, tools_config)
+            lg.info(f"[VoiceL2DClient] Processing input ({source}): {text[:50]}...")
+
+            if self._tools_config:
+                response = await self.chat_with_tools(text, self._tools_config)
             else:
                 response = await self.chat(text)
 
-            # Send AI message to frontend
+            lg.info(f"[VoiceL2DClient] LLM response: {response[:50]}...")
+
             await self.ws_server.send_ai_message(response)
 
-            # Speak the response
             if response:
                 await self.speak(response)
 
             return response
 
     async def chat(self, user_message: str) -> str:
-        """
-        Process a user message and generate a response.
-
-        Args:
-            user_message: The user's input message
-
-        Returns:
-            The assistant's response text
-        """
-        # Add user message to history
+        """Process a user message and generate a response."""
         self.messages.append({"role": "user", "content": user_message})
 
-        # Build messages with system prompt
         messages_to_send = []
         if self.system_prompt:
             messages_to_send.append({"role": "system", "content": self.system_prompt})
         messages_to_send.extend(self.messages)
 
-        # Get LLM response
         response = self.llm.chat.completions.create(
             model=MODEL_NAME,
             messages=messages_to_send,
         )
 
         assistant_message = response.choices[0].message.content or ""
-
-        # Add assistant message to history
         self.messages.append({"role": "assistant", "content": assistant_message})
 
         return assistant_message
 
     async def chat_with_tools(self, user_message: str, tools_config: list[dict]) -> str:
-        """
-        Process a user message with tool support.
-
-        Args:
-            user_message: The user's input message
-            tools_config: OpenAI-format tool definitions
-
-        Returns:
-            The assistant's final response text
-        """
-        # Add user message to history
+        """Process a user message with tool support."""
         self.messages.append({"role": "user", "content": user_message})
 
-        # Build messages with system prompt
         messages_to_send = []
         if self.system_prompt:
             messages_to_send.append({"role": "system", "content": self.system_prompt})
         messages_to_send.extend(self.messages)
 
-        # Get LLM response
         response = self.llm.chat.completions.create(
             model=MODEL_NAME,
             messages=messages_to_send,
@@ -474,9 +372,7 @@ class VoiceL2DClient:
 
         ai_msg = response.choices[0].message
 
-        # Handle tool calls if present
         if ai_msg.tool_calls:
-            # Convert Message object to dict for consistent message history
             self.messages.append({
                 "role": "assistant",
                 "content": ai_msg.content,
@@ -497,7 +393,7 @@ class VoiceL2DClient:
                 tool_name = tool_call.function.name
                 tool_args = json.loads(tool_call.function.arguments)
 
-                lg.info(f"[VoiceL2DClient] Calling tool: {tool_name}")
+                lg.info(f"[VoiceL2DClient] Calling MCP tool: {tool_name}")
                 result = await self._call_mcp_tool(tool_name, tool_args)
 
                 self.messages.append({
@@ -506,7 +402,6 @@ class VoiceL2DClient:
                     "content": result,
                 })
 
-            # Get final response after tool calls
             messages_to_send = []
             if self.system_prompt:
                 messages_to_send.append({
@@ -522,119 +417,158 @@ class VoiceL2DClient:
             )
 
             assistant_message = final_response.choices[0].message.content or ""
+            # Append final assistant message after tool calls
+            self.messages.append({"role": "assistant", "content": assistant_message})
         else:
             assistant_message = ai_msg.content or ""
-
-        # Add assistant message to history
-        self.messages.append({"role": "assistant", "content": assistant_message})
+            # Append assistant message when no tool calls
+            self.messages.append({"role": "assistant", "content": assistant_message})
 
         return assistant_message
 
     def _on_speech_segment(self, audio_data: np.ndarray) -> None:
-        """
-        Callback when a speech segment is detected.
+        """Callback when a speech segment is detected.
 
-        Called by VAD when speech ends.
-
-        Args:
-            audio_data: Audio data of the speech segment
+        This is called from the audio recording thread, so we need to use
+        call_soon_threadsafe to schedule the async processing.
         """
-        # Queue audio for async processing
-        asyncio.create_task(self._process_speech_segment(audio_data))
+        if self._event_loop is None:
+            lg.warning("[VoiceL2DClient] Event loop not set, cannot process speech")
+            return
+
+        # Schedule the coroutine on the main event loop from this thread
+        self._event_loop.call_soon_threadsafe(
+            lambda: asyncio.create_task(self._process_speech_segment(audio_data))
+        )
 
     async def _process_speech_segment(self, audio_data: np.ndarray) -> None:
-        """
-        Process a detected speech segment.
-
-        Args:
-            audio_data: Audio data of the speech segment
-        """
+        """Process a detected speech segment."""
         if not self._is_listening:
             return
 
-        lg.info(
-            f"[VoiceL2DClient] Processing speech segment ({len(audio_data)} samples)"
-        )
+        lg.info(f"[VoiceL2DClient] Speech detected ({len(audio_data)} samples)")
 
-        # Transcribe speech
         await self.ws_server.send_status("processing", "Transcribing...")
         text = self.asr.transcribe(audio_data, sample_rate=16000)
 
         if text and text.strip():
-            lg.info(f"[VoiceL2DClient] Transcribed: {text}")
-            # Queue for processing
+            lg.info(f"[VoiceL2DClient] ASR result: {text}")
             self._ensure_async_primitives()
             assert self._text_input_queue is not None
             await self._text_input_queue.put(("voice", text))
         else:
-            lg.warning("[VoiceL2DClient] No transcription result")
-            await self.ws_server.send_status("listening")
+            lg.warning("[VoiceL2DClient] ASR returned empty result")
+            if self._is_listening:
+                await self.ws_server.send_status("listening")
 
-    async def _process_text_input_queue(
-        self, tools_config: Optional[list[dict]] = None
-    ) -> None:
-        """
-        Process text inputs from the queue.
-
-        Args:
-            tools_config: Optional tool configuration
-        """
+    async def _process_text_input_queue(self) -> None:
+        """Process text inputs from the queue."""
         self._ensure_async_primitives()
         assert self._text_input_queue is not None
 
-        while self._is_listening:
+        while True:
             try:
-                # Wait for input with timeout
                 source, text = await asyncio.wait_for(
                     self._text_input_queue.get(), timeout=0.5
                 )
+                await self.process_user_input(text, source)
 
-                # Process the input
-                await self.process_user_input(text, source, tools_config)
-
-                # Resume listening
-                await self.ws_server.send_status("listening")
+                if self._is_listening:
+                    await self.ws_server.send_status("listening")
 
             except asyncio.TimeoutError:
                 continue
+            except asyncio.CancelledError:
+                break
             except Exception as e:
                 lg.error(f"[VoiceL2DClient] Error processing input: {e}")
 
-    def _on_frontend_text_input(self, text: str) -> None:
+    async def _handle_frontend_command(self, command: str, data: dict) -> dict:
         """
-        Handle text input from frontend.
+        Handle commands from frontend.
 
         Args:
-            text: Text input from user
-        """
-        if text.strip():
-            # Queue for processing (will be picked up by _process_text_input_queue)
-            self._ensure_async_primitives()
-            assert self._text_input_queue is not None
-            asyncio.create_task(self._text_input_queue.put(("text", text)))
-
-    async def start_listening(self) -> bool:
-        """
-        Start listening for voice input.
+            command: Command type
+            data: Command data
 
         Returns:
-            True if started successfully
+            Response dict
         """
+        lg.debug(f"[VoiceL2DClient] Frontend command: {command}")
+
+        if command == "toggle_listening":
+            enabled = data.get("enabled", not self._is_listening)
+            if enabled and not self._is_listening:
+                await self.start_listening()
+            elif not enabled and self._is_listening:
+                self.stop_listening()
+            return {"success": True, "listening": self._is_listening}
+
+        elif command == "get_voices":
+            voices = self.get_voices_info()
+            return {"success": True, "voices": voices}
+
+        elif command == "switch_voice":
+            voice_name = data.get("voice_name")
+            if voice_name:
+                success = self.switch_voice(voice_name)
+                return {
+                    "success": success,
+                    "current_voice": self.voice_manager.current_voice,
+                }
+            return {"success": False, "error": "No voice_name provided"}
+
+        elif command == "get_status":
+            return {
+                "success": True,
+                "listening": self._is_listening,
+                "current_voice": self.voice_manager.current_voice,
+                "loaded_voice": self._loaded_voice_name,
+            }
+
+        else:
+            return {"success": False, "error": f"Unknown command: {command}"}
+
+    def _on_frontend_message(self, message: str) -> None:
+        """Handle messages from frontend WebSocket."""
+        try:
+            data = json.loads(message)
+            msg_type = data.get("type")
+
+            if msg_type == "text_input":
+                text = data.get("text", "").strip()
+                if text:
+                    self._ensure_async_primitives()
+                    assert self._text_input_queue is not None
+                    asyncio.create_task(self._text_input_queue.put(("text", text)))
+
+            elif msg_type == "command":
+                command = data.get("command")
+                asyncio.create_task(self._handle_command_async(command, data))
+
+        except json.JSONDecodeError:
+            lg.warning("[VoiceL2DClient] Invalid JSON from frontend")
+
+    async def _handle_command_async(self, command: str, data: dict) -> None:
+        """Handle command asynchronously and send response."""
+        response = await self._handle_frontend_command(command, data)
+        await self.ws_server.send_command_response(command, response)
+
+    async def start_listening(self) -> bool:
+        """Start listening for voice input."""
         if self._is_listening:
             lg.warning("[VoiceL2DClient] Already listening")
             return True
 
-        # Set up VAD callback
         self.vad.set_on_speech_segment(self._on_speech_segment)
 
-        # Start recording
         if not self.recorder.start(callback=self.vad.process_audio):
             lg.error("[VoiceL2DClient] Failed to start recording")
             return False
 
         self._is_listening = True
         await self.ws_server.send_status("listening")
-        lg.info("[VoiceL2DClient] Started listening")
+        lg.info("[VoiceL2DClient] Voice input ENABLED")
         return True
 
     def stop_listening(self) -> None:
@@ -645,288 +579,91 @@ class VoiceL2DClient:
         self._is_listening = False
         self.recorder.stop()
         self.vad.reset()
-        lg.info("[VoiceL2DClient] Stopped listening")
+        lg.info("[VoiceL2DClient] Voice input DISABLED")
 
-    async def run_voice_mode(self) -> None:
-        """Run the client in voice-controlled mode."""
-        lg.info("\n[VoiceL2DClient] Starting voice-controlled mode...")
-        lg.info(
-            f"[VoiceL2DClient] WebSocket server: ws://{WEBSOCKET_HOST}:{WEBSOCKET_PORT}"
-        )
-        lg.info(f"[VoiceL2DClient] MCP server: {MCP_SERVER_URL}")
+    async def run(self) -> None:
+        """Run the client as a background service."""
+        # Store event loop reference for thread-safe callbacks
+        self._event_loop = asyncio.get_running_loop()
 
-        # Start WebSocket server
-        await self.ws_server.start()
-
-        # Set up frontend text input handler
-        self.ws_server.set_on_text_input(self._on_frontend_text_input)
-
-        # Connect to MCP server
-        lg.info("\n[VoiceL2DClient] Connecting to MCP server...")
-
-        async with self.mcp_client:
-            # Get available tools
-            available_tools = await self.mcp_client.list_tools()
-            lg.info(
-                f"[VoiceL2DClient] Connected! {len(available_tools)} tools available"
-            )
-
-            for tool in available_tools:
-                lg.info(f"   - {tool.name}: {tool.description[:50]}...")
-
-            tools_config = self._adapt_tools(available_tools)
-
-            # Show available voices
-            voices = self.list_voices()
-            lg.info(f"\n[VoiceL2DClient] Available voices: {voices}")
-            lg.info(
-                f"[VoiceL2DClient] Current voice: {self.voice_manager.current_voice}"
-            )
-
-            # Start listening
-            if not await self.start_listening():
-                lg.error("[VoiceL2DClient] Failed to start voice input")
-                return
-
-            print("\n" + "=" * 60)
-            print("Voice-controlled mode active!")
-            print("Speak into your microphone or type in the frontend.")
-            print("Press Ctrl+C to stop")
-            print("=" * 60 + "\n")
-
-            # Process text input queue
-            try:
-                await self._process_text_input_queue(tools_config)
-            except KeyboardInterrupt:
-                lg.info("\n\nInterrupted. Goodbye!")
-                print("\n\nInterrupted. Goodbye!")
-            finally:
-                self.stop_listening()
-
-        # Stop WebSocket server
-        await self.ws_server.stop()
-
-    async def run_interactive(self) -> None:
-        """Run the client in interactive mode (keyboard input)."""
-        lg.info(f"\n[VoiceL2DClient] Starting interactive session...")
-        lg.info(
-            f"[VoiceL2DClient] WebSocket server: ws://{WEBSOCKET_HOST}:{WEBSOCKET_PORT}"
-        )
-        lg.info(f"[VoiceL2DClient] MCP server: {MCP_SERVER_URL}")
+        lg.info("=" * 60)
+        lg.info("[VoiceL2DClient] Starting service...")
+        lg.info(f"[VoiceL2DClient] WebSocket: ws://{WEBSOCKET_HOST}:{WEBSOCKET_PORT}")
+        lg.info(f"[VoiceL2DClient] MCP Server: {MCP_SERVER_URL}")
+        lg.info("=" * 60)
 
         # Start WebSocket server
         await self.ws_server.start()
 
-        # Set up frontend text input handler
-        self.ws_server.set_on_text_input(self._on_frontend_text_input)
+        # Set up message handler
+        self.ws_server.set_on_text_input(self._on_frontend_message)
 
         # Connect to MCP server
-        lg.info(f"\n[VoiceL2DClient] Connecting to MCP server...")
+        lg.info("[VoiceL2DClient] Connecting to MCP server...")
 
-        async with self.mcp_client:
-            # Get available tools
-            available_tools = await self.mcp_client.list_tools()
-            lg.info(
-                f"[VoiceL2DClient] Connected! {len(available_tools)} tools available"
-            )
+        try:
+            async with self.mcp_client:
+                available_tools = await self.mcp_client.list_tools()
+                lg.info(
+                    f"[VoiceL2DClient] MCP connected, {len(available_tools)} tools:"
+                )
+                for tool in available_tools:
+                    lg.info(f"  - {tool.name}")
 
-            for tool in available_tools:
-                lg.info(f"   - {tool.name}: {tool.description[:50]}...")
+                self._tools_config = self._adapt_tools(available_tools)
 
-            tools_config = self._adapt_tools(available_tools)
+                # Log available voices
+                voices = self.voice_manager.list_voices()
+                lg.info(f"[VoiceL2DClient] Available voices: {voices}")
+                lg.info(
+                    f"[VoiceL2DClient] Current voice: {self.voice_manager.current_voice}"
+                )
 
-            # Show available voices
-            voices = self.list_voices()
-            lg.info(f"\n[VoiceL2DClient] Available voices: {voices}")
-            lg.info(
-                f"[VoiceL2DClient] Current voice: {self.voice_manager.current_voice}"
-            )
+                lg.info("")
+                lg.info("[VoiceL2DClient] Service ready!")
+                lg.info("[VoiceL2DClient] Voice input is OFF by default.")
+                lg.info(
+                    "[VoiceL2DClient] Use frontend to enable voice input or send text."
+                )
+                lg.info("")
 
-            print("\n" + "=" * 60)
-            print("Commands:")
-            print("  /voice <name>  - Switch voice")
-            print("  /voices        - List voices")
-            print("  /quit          - Exit")
-            print("  (any text)     - Chat and generate speech")
-            print("=" * 60 + "\n")
+                # Send initial status to frontend
+                await self.ws_server.send_status("idle")
+                await self.ws_server.send_voices_list(self.get_voices_info())
 
-            while True:
+                # Run the text input queue processor
+                queue_task = asyncio.create_task(self._process_text_input_queue())
+
                 try:
-                    user_input = input("You: ").strip()
+                    # Keep running until interrupted
+                    while True:
+                        await asyncio.sleep(1)
+                except asyncio.CancelledError:
+                    pass
+                finally:
+                    queue_task.cancel()
+                    try:
+                        await queue_task
+                    except asyncio.CancelledError:
+                        pass
 
-                    if not user_input:
-                        continue
-
-                    # Handle commands
-                    if user_input.startswith("/"):
-                        parts = user_input.split(maxsplit=1)
-                        cmd = parts[0].lower()
-
-                        if cmd == "/quit":
-                            print("Goodbye!")
-                            break
-                        elif cmd == "/voices":
-                            print(f"Available voices: {self.list_voices()}")
-                            print(f"Current voice: {self.voice_manager.current_voice}")
-                            print(f"Loaded voice: {self._loaded_voice_name}")
-                            continue
-                        elif cmd == "/voice":
-                            if len(parts) > 1:
-                                voice_name = parts[1]
-                                if self.switch_voice(voice_name):
-                                    print(f"Switched to voice: {voice_name}")
-                                else:
-                                    print(f"Voice not found: {voice_name}")
-                            else:
-                                print("Usage: /voice <name>")
-                            continue
-                        else:
-                            print(f"Unknown command: {cmd}")
-                            continue
-
-                    # Process user input
-                    response = await self.process_user_input(
-                        user_input, "text", tools_config
-                    )
-                    print(f"\nAssistant: {response}\n")
-
-                except KeyboardInterrupt:
-                    lg.info("\n\nInterrupted. Goodbye!")
-                    print("\n\nInterrupted. Goodbye!")
-                    break
-                except Exception as e:
-                    lg.error(f"Error: {e}")
-                    print(f"Error: {e}")
-                    import traceback
-
-                    traceback.print_exc()
-
-        # Stop WebSocket server
-        await self.ws_server.stop()
-
-    async def run_simple(self) -> None:
-        """Run the client without MCP integration (simple mode)."""
-        lg.info(f"\n[VoiceL2DClient] Starting simple mode (no MCP)...")
-        lg.info(
-            f"[VoiceL2DClient] WebSocket server: ws://{WEBSOCKET_HOST}:{WEBSOCKET_PORT}"
-        )
-
-        # Start WebSocket server
-        await self.ws_server.start()
-
-        # Set up frontend text input handler
-        self.ws_server.set_on_text_input(self._on_frontend_text_input)
-
-        # Show available voices
-        voices = self.list_voices()
-        lg.info(f"\n[VoiceL2DClient] Available voices: {voices}")
-        lg.info(f"[VoiceL2DClient] Current voice: {self.voice_manager.current_voice}")
-
-        print("\n" + "=" * 60)
-        print("Commands:")
-        print("  /voice <name>  - Switch voice")
-        print("  /voices        - List voices")
-        print("  /say <text>    - Speak text directly (no LLM)")
-        print("  /quit          - Exit")
-        print("  (any text)     - Chat and generate speech")
-        print("=" * 60 + "\n")
-
-        while True:
-            try:
-                user_input = input("You: ").strip()
-
-                if not user_input:
-                    continue
-
-                # Handle commands
-                if user_input.startswith("/"):
-                    parts = user_input.split(maxsplit=1)
-                    cmd = parts[0].lower()
-
-                    if cmd == "/quit":
-                        print("Goodbye!")
-                        break
-                    elif cmd == "/voices":
-                        print(f"Available voices: {self.list_voices()}")
-                        print(f"Current voice: {self.voice_manager.current_voice}")
-                        print(f"Loaded voice: {self._loaded_voice_name}")
-                        continue
-                    elif cmd == "/voice":
-                        if len(parts) > 1:
-                            voice_name = parts[1]
-                            if self.switch_voice(voice_name):
-                                print(f"Switched to voice: {voice_name}")
-                            else:
-                                print(f"Voice not found: {voice_name}")
-                        else:
-                            print("Usage: /voice <name>")
-                        continue
-                    elif cmd == "/say":
-                        if len(parts) > 1:
-                            text = parts[1]
-                            print("[Speaking...]")
-                            await self.speak(text)
-                            print("[Done]\n")
-                        else:
-                            print("Usage: /say <text>")
-                        continue
-                    else:
-                        print(f"Unknown command: {cmd}")
-                        continue
-
-                # Process user input
-                response = await self.process_user_input(user_input, "text")
-                print(f"\nAssistant: {response}\n")
-
-            except KeyboardInterrupt:
-                lg.info("\n\nInterrupted. Goodbye!")
-                print("\n\nInterrupted. Goodbye!")
-                break
-            except Exception as e:
-                lg.error(f"Error: {e}")
-                print(f"Error: {e}")
-                import traceback
-
-                traceback.print_exc()
-
-        # Stop WebSocket server
-        await self.ws_server.stop()
+        except Exception as e:
+            lg.error(f"[VoiceL2DClient] Error: {e}")
+            raise
+        finally:
+            self.stop_listening()
+            await self.ws_server.stop()
+            lg.info("[VoiceL2DClient] Service stopped")
 
 
 def main():
     """Main entry point."""
-    import argparse
-
-    parser = argparse.ArgumentParser(description="VoiceL2D Client")
-    parser.add_argument(
-        "--simple",
-        action="store_true",
-        help="Run in simple mode without MCP integration",
-    )
-    parser.add_argument(
-        "--voice",
-        action="store_true",
-        help="Run in voice-controlled mode (microphone input)",
-    )
-    parser.add_argument(
-        "--interactive",
-        action="store_true",
-        help="Run in interactive mode (keyboard input, default)",
-    )
-    args = parser.parse_args()
-
     client = VoiceL2DClient()
 
     try:
-        if args.voice:
-            asyncio.run(client.run_voice_mode())
-        elif args.simple:
-            asyncio.run(client.run_simple())
-        else:
-            asyncio.run(client.run_interactive())
+        asyncio.run(client.run())
     except KeyboardInterrupt:
-        lg.info("\nExiting...")
-        print("\nExiting...")
+        lg.info("\n[VoiceL2DClient] Shutting down...")
 
 
 if __name__ == "__main__":

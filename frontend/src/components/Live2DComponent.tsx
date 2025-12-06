@@ -3,7 +3,7 @@ import * as PIXI from 'pixi.js';
 import { Live2DModel } from 'pixi-live2d-display/cubism4';
 import { startUpCubism4, cubism4Ready } from 'pixi-live2d-display/cubism4';
 import { ActionPanel } from './ActionPanel';
-import { ChatPanel, ChatMessage } from './ChatPanel';
+import { ChatPanel, ChatMessage, VoiceInfo } from './ChatPanel';
 import { updateCurrentModelState, getActions, getModelPath } from '../api/live2d-api';
 import testAudioUrl from '../assets/test_audio.wav';
 
@@ -103,6 +103,8 @@ export const Live2DComponent: React.FC = () => {
     const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
     const [isProcessing, setIsProcessing] = useState<boolean>(false);
     const [statusText, setStatusText] = useState<string>('');
+    const [isListening, setIsListening] = useState<boolean>(false);
+    const [voices, setVoices] = useState<VoiceInfo[]>([]);
 
     // Lip sync refs
     const audioContextRef = useRef<AudioContext | null>(null);
@@ -479,6 +481,32 @@ export const Live2DComponent: React.FC = () => {
                     };
                     setStatusText(statusMap[msg.status] || msg.message || '');
                     setIsProcessing(msg.status === 'processing');
+                    // Update listening state based on status
+                    if (msg.status === 'listening') {
+                        setIsListening(true);
+                    } else if (msg.status === 'idle') {
+                        // Keep listening state, only idle status doesn't change it
+                    }
+                } else if (msg.type === 'voices_list') {
+                    // Received list of available voices
+                    console.log('[AudioWS] Voices list:', msg.voices);
+                    setVoices(msg.voices || []);
+                } else if (msg.type === 'command_response') {
+                    // Response to a command
+                    console.log('[AudioWS] Command response:', msg.command, msg.response);
+                    if (msg.command === 'toggle_listening') {
+                        setIsListening(msg.response?.listening || false);
+                    } else if (msg.command === 'get_voices') {
+                        setVoices(msg.response?.voices || []);
+                    } else if (msg.command === 'switch_voice') {
+                        // Update voices list to reflect current voice
+                        if (msg.response?.success && msg.response?.current_voice) {
+                            setVoices(prev => prev.map(v => ({
+                                ...v,
+                                is_current: v.name === msg.response.current_voice,
+                            })));
+                        }
+                    }
                 } else if (msg.type === 'pong') {
                     // Heartbeat response
                 }
@@ -532,6 +560,34 @@ export const Live2DComponent: React.FC = () => {
             console.error('[AudioWS] WebSocket not connected');
             setIsProcessing(false);
             setStatusText('连接断开');
+        }
+    }, []);
+
+    // Toggle voice listening
+    const handleToggleListening = useCallback((enabled: boolean) => {
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+            wsRef.current.send(JSON.stringify({
+                type: 'command',
+                command: 'toggle_listening',
+                enabled: enabled,
+            }));
+            console.log('[AudioWS] Toggle listening:', enabled);
+        } else {
+            console.error('[AudioWS] WebSocket not connected');
+        }
+    }, []);
+
+    // Change TTS voice
+    const handleVoiceChange = useCallback((voiceName: string) => {
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+            wsRef.current.send(JSON.stringify({
+                type: 'command',
+                command: 'switch_voice',
+                voice_name: voiceName,
+            }));
+            console.log('[AudioWS] Switch voice:', voiceName);
+        } else {
+            console.error('[AudioWS] WebSocket not connected');
         }
     }, []);
 
@@ -893,11 +949,6 @@ export const Live2DComponent: React.FC = () => {
 
     // Setup WebSocket for audio streaming
     useEffect(() => {
-        // Only setup WebSocket in dev mode
-        if (!import.meta.env.DEV) {
-            return;
-        }
-
         // Delay WebSocket setup to allow other connections to establish
         const timer = setTimeout(() => {
             setupAudioWebSocket();
@@ -922,10 +973,6 @@ export const Live2DComponent: React.FC = () => {
     }, [currentModel]);
 
     useEffect(() => {
-        if (!import.meta.env.DEV) {
-            return;
-        }
-
         if (eventSourceRef.current) {
             return;
         }
@@ -1007,6 +1054,10 @@ export const Live2DComponent: React.FC = () => {
                 onSendMessage={handleSendMessage}
                 isProcessing={isProcessing}
                 statusText={statusText}
+                isListening={isListening}
+                onToggleListening={handleToggleListening}
+                voices={voices}
+                onVoiceChange={handleVoiceChange}
             />
             <ActionPanel
                 currentModel={currentModel}

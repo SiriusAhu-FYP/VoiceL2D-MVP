@@ -26,7 +26,13 @@ params = {
 }
 
 
-def play_stream():
+def play_stream(start_time: float):
+    """
+    Play audio stream from TTS server.
+    
+    Args:
+        start_time: The time when playback was initiated (for latency measurement)
+    """
     # 初始化 PyAudio
     p = pyaudio.PyAudio()
 
@@ -69,7 +75,7 @@ def play_stream():
 if __name__ == "__main__":
     start_time = time.time()
     try:
-        play_stream()
+        play_stream(start_time)
     except KeyboardInterrupt:
         lg.info("停止播放")
     except Exception as e:

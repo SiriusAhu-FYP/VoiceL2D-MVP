@@ -1,8 +1,9 @@
 /**
  * Chat Panel Component
  *
- * Displays conversation history with bubble-style messages
- * and provides an input box for user text input.
+ * Displays conversation history with bubble-style messages,
+ * provides an input box for user text input,
+ * and includes voice input toggle and TTS voice selector.
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -16,6 +17,12 @@ export interface ChatMessage {
     timestamp: Date;
 }
 
+export interface VoiceInfo {
+    name: string;
+    prompt_text: string;
+    is_current: boolean;
+}
+
 export interface ChatPanelProps {
     /** Messages to display (optional - can be managed externally) */
     messages?: ChatMessage[];
@@ -25,6 +32,14 @@ export interface ChatPanelProps {
     isProcessing?: boolean;
     /** Current status text to display */
     statusText?: string;
+    /** Whether voice input is enabled */
+    isListening?: boolean;
+    /** Callback to toggle voice input */
+    onToggleListening?: (enabled: boolean) => void;
+    /** Available TTS voices */
+    voices?: VoiceInfo[];
+    /** Callback when voice is changed */
+    onVoiceChange?: (voiceName: string) => void;
 }
 
 export const ChatPanel: React.FC<ChatPanelProps> = ({
@@ -32,6 +47,10 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     onSendMessage,
     isProcessing = false,
     statusText,
+    isListening = false,
+    onToggleListening,
+    voices = [],
+    onVoiceChange,
 }) => {
     // Use external messages if provided, otherwise use internal state
     const [internalMessages, setInternalMessages] = useState<ChatMessage[]>([]);
@@ -39,6 +58,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
 
     const [inputText, setInputText] = useState('');
     const [isExpanded, setIsExpanded] = useState(true);
+    const [showVoiceSelector, setShowVoiceSelector] = useState(false);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLInputElement>(null);
 
@@ -94,6 +114,21 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         }
     }, [handleSend]);
 
+    // Handle voice toggle
+    const handleVoiceToggle = useCallback(() => {
+        if (onToggleListening) {
+            onToggleListening(!isListening);
+        }
+    }, [isListening, onToggleListening]);
+
+    // Handle voice selection
+    const handleVoiceSelect = useCallback((voiceName: string) => {
+        if (onVoiceChange) {
+            onVoiceChange(voiceName);
+        }
+        setShowVoiceSelector(false);
+    }, [onVoiceChange]);
+
     // Format timestamp
     const formatTime = (date: Date): string => {
         return date.toLocaleTimeString('zh-CN', {
@@ -101,6 +136,9 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             minute: '2-digit',
         });
     };
+
+    // Get current voice name
+    const currentVoice = voices.find(v => v.is_current);
 
     return (
         <div className={`chat-panel ${isExpanded ? 'expanded' : 'collapsed'}`}>
@@ -125,13 +163,76 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
 
             {isExpanded && (
                 <>
+                    {/* Control Bar */}
+                    <div className="chat-control-bar">
+                        {/* Voice Input Toggle */}
+                        <button
+                            className={`voice-toggle-btn ${isListening ? 'active' : ''}`}
+                            onClick={handleVoiceToggle}
+                            disabled={isProcessing}
+                            title={isListening ? '关闭语音输入' : '开启语音输入'}
+                        >
+                            <span className="voice-icon">{isListening ? '🎤' : '🎙️'}</span>
+                            <span className="voice-label">
+                                {isListening ? '语音已开启' : '语音已关闭'}
+                            </span>
+                        </button>
+
+                        {/* Voice Selector */}
+                        {voices.length > 0 && (
+                            <div className="voice-selector-container">
+                                <button
+                                    className="voice-selector-btn"
+                                    onClick={() => setShowVoiceSelector(!showVoiceSelector)}
+                                    title="选择TTS音色"
+                                >
+                                    <span className="voice-selector-icon">🔊</span>
+                                    <span className="voice-selector-label">
+                                        {currentVoice?.name || '选择音色'}
+                                    </span>
+                                    <span className="voice-selector-arrow">
+                                        {showVoiceSelector ? '▲' : '▼'}
+                                    </span>
+                                </button>
+
+                                {showVoiceSelector && (
+                                    <div className="voice-selector-dropdown">
+                                        <div className="voice-selector-header">
+                                            TTS 音色列表
+                                            <span className="voice-selector-hint">
+                                                配置文件: client/utils/config.toml
+                                            </span>
+                                        </div>
+                                        {voices.map((voice) => (
+                                            <button
+                                                key={voice.name}
+                                                className={`voice-option ${voice.is_current ? 'active' : ''}`}
+                                                onClick={() => handleVoiceSelect(voice.name)}
+                                            >
+                                                <span className="voice-option-name">
+                                                    {voice.name}
+                                                </span>
+                                                <span className="voice-option-hint">
+                                                    {voice.prompt_text.substring(0, 20)}...
+                                                </span>
+                                                {voice.is_current && (
+                                                    <span className="voice-option-check">✓</span>
+                                                )}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+
                     {/* Messages Area */}
                     <div className="chat-messages">
                         {messages.length === 0 ? (
                             <div className="chat-empty">
                                 <span>开始对话吧...</span>
                                 <span className="chat-empty-hint">
-                                    语音输入或在下方输入文字
+                                    {isListening ? '正在聆听语音...' : '开启语音输入或在下方输入文字'}
                                 </span>
                             </div>
                         ) : (
@@ -198,4 +299,3 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
 };
 
 export default ChatPanel;
-

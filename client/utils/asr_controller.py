@@ -1,262 +1,125 @@
 """
-ASR Controller - Handle GLM-ASR API interactions.
+ASR Controller - Factory for creating ASR implementations.
 
-This module provides functionality to:
-- Convert audio to text using GLM-ASR
-- Support both synchronous and streaming transcription
-- Handle audio format conversion for API compatibility
+This module provides a factory function to create the appropriate ASR
+controller based on the ASR_MODE environment variable.
+
+Usage:
+    from utils import create_asr_controller
+    asr = create_asr_controller()  # Automatically selects based on ASR_MODE
 """
 
-import io
 import os
-import tempfile
-import wave
 from typing import Optional
 
-import numpy as np
-import requests
 from dotenv import load_dotenv
 from loguru import logger as lg
+
+from .asr_base import ASRBase
 
 # Load environment variables
 load_dotenv()
 
 
-class ASRController:
+def create_asr_controller(mode: Optional[str] = None) -> ASRBase:
     """
-    Controller for GLM-ASR (ZhipuAI) speech-to-text API.
+    Factory function to create an ASR controller.
 
-    Handles audio transcription using the GLM-ASR model.
+    Creates either an API-based or local ASR controller based on
+    the ASR_MODE environment variable or the mode parameter.
+
+    Args:
+        mode: ASR mode ('api' or 'local'). If None, reads from ASR_MODE env.
+
+    Returns:
+        An ASR controller instance (either ASRApiController or ASRLocalController)
+
+    Raises:
+        ValueError: If the specified mode is invalid
+        ImportError: If local mode dependencies are not installed
+    """
+    # Determine mode
+    asr_mode = (mode or os.getenv("ASR_MODE", "api")).lower().strip()
+
+    lg.info(f"[ASRController] Creating ASR controller with mode: {asr_mode}")
+
+    if asr_mode == "api":
+        from .asr_api import ASRApiController
+
+        controller = ASRApiController()
+
+        if not controller.is_available():
+            lg.warning(
+                "[ASRController] API mode selected but no API key configured. "
+                "Set SILICONCLOUD_API_KEY environment variable."
+            )
+
+        return controller
+
+    elif asr_mode == "local":
+        try:
+            from .asr_local import ASRLocalController
+
+            controller = ASRLocalController()
+
+            if not controller.is_available():
+                lg.error(
+                    "[ASRController] Local mode selected but faster-whisper "
+                    "is not installed. Run: uv sync --extra local-asr"
+                )
+                # Fall back to API mode
+                lg.warning("[ASRController] Falling back to API mode")
+                from .asr_api import ASRApiController
+
+                return ASRApiController()
+
+            return controller
+
+        except ImportError as e:
+            lg.error(f"[ASRController] Failed to import local ASR: {e}")
+            lg.warning("[ASRController] Falling back to API mode")
+            from .asr_api import ASRApiController
+
+            return ASRApiController()
+
+    else:
+        raise ValueError(f"Invalid ASR_MODE: '{asr_mode}'. Must be 'api' or 'local'.")
+
+
+# Backwards compatibility: export ASRController as alias
+# This allows existing code using `from utils import ASRController` to work
+class ASRController(ASRBase):
+    """
+    Backwards-compatible ASR controller wrapper.
+
+    This class wraps the factory-created controller for compatibility
+    with existing code that imports ASRController directly.
+
+    Prefer using create_asr_controller() for new code.
     """
 
-    # API endpoint
-    API_URL = "https://open.bigmodel.cn/api/paas/v4/audio/transcriptions"
-
-    # Model name
-    MODEL = "glm-asr"
-
-    # Audio parameters
-    SAMPLE_RATE = 16000  # Recommended for GLM-ASR
-    CHANNELS = 1
-    SAMPLE_WIDTH = 2  # 16-bit
-
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(self, mode: Optional[str] = None):
         """
         Initialize the ASR controller.
 
         Args:
-            api_key: ZhipuAI API key. If None, reads from ZHIPU_API_KEY env var.
+            mode: ASR mode ('api' or 'local'). If None, reads from ASR_MODE env.
         """
-        self.api_key = api_key or os.getenv("ZHIPU_API_KEY") or os.getenv("API_KEY_ZHIPU")
-        if not self.api_key:
-            lg.warning(
-                "[ASRController] No API key found. "
-                "Set ZHIPU_API_KEY environment variable."
-            )
+        self._controller = create_asr_controller(mode)
 
-        lg.info("[ASRController] Initialized")
+    @property
+    def name(self) -> str:
+        """Get implementation name."""
+        return self._controller.name
 
-    def transcribe(
-        self,
-        audio_data: np.ndarray,
-        sample_rate: int = SAMPLE_RATE,
-        temperature: float = 0.7,
-    ) -> Optional[str]:
-        """
-        Transcribe audio data to text.
+    def is_available(self) -> bool:
+        """Check if controller is available."""
+        return self._controller.is_available()
 
-        Args:
-            audio_data: Audio data as int16 numpy array
-            sample_rate: Sample rate of audio data
-            temperature: Sampling temperature (0.0-1.0)
+    def transcribe(self, audio_data, sample_rate: int = ASRBase.SAMPLE_RATE):
+        """Transcribe audio data."""
+        return self._controller.transcribe(audio_data, sample_rate)
 
-        Returns:
-            Transcribed text, or None if failed
-        """
-        if not self.api_key:
-            lg.error("[ASRController] No API key configured")
-            return None
-
-        # Convert audio to WAV bytes
-        wav_bytes = self._audio_to_wav(audio_data, sample_rate)
-
-        # Create temporary file for upload
-        try:
-            with tempfile.NamedTemporaryFile(
-                suffix=".wav", delete=False
-            ) as temp_file:
-                temp_file.write(wav_bytes)
-                temp_path = temp_file.name
-
-            # Make API request
-            headers = {"Authorization": f"Bearer {self.api_key}"}
-            payload = {
-                "model": self.MODEL,
-                "temperature": str(temperature),
-                "stream": "false",
-            }
-
-            with open(temp_path, "rb") as audio_file:
-                files = {"file": ("audio.wav", audio_file, "audio/wav")}
-                response = requests.post(
-                    self.API_URL,
-                    headers=headers,
-                    data=payload,
-                    files=files,
-                    timeout=60,
-                )
-
-            # Clean up temp file
-            os.unlink(temp_path)
-
-            # Parse response
-            if response.status_code == 200:
-                result = response.json()
-                text = result.get("text", "")
-                lg.info(f"[ASRController] Transcribed: {text[:50]}...")
-                return text
-            else:
-                lg.error(
-                    f"[ASRController] API error: {response.status_code} - "
-                    f"{response.text}"
-                )
-                return None
-
-        except requests.RequestException as e:
-            lg.error(f"[ASRController] Request failed: {e}")
-            return None
-        except Exception as e:
-            lg.error(f"[ASRController] Error: {e}")
-            # Clean up temp file if it exists
-            if "temp_path" in locals():
-                try:
-                    os.unlink(temp_path)
-                except Exception:
-                    pass
-            return None
-
-    def transcribe_file(
-        self,
-        file_path: str,
-        temperature: float = 0.7,
-    ) -> Optional[str]:
-        """
-        Transcribe audio from a file.
-
-        Args:
-            file_path: Path to audio file (.wav or .mp3)
-            temperature: Sampling temperature (0.0-1.0)
-
-        Returns:
-            Transcribed text, or None if failed
-        """
-        if not self.api_key:
-            lg.error("[ASRController] No API key configured")
-            return None
-
-        try:
-            headers = {"Authorization": f"Bearer {self.api_key}"}
-            payload = {
-                "model": self.MODEL,
-                "temperature": str(temperature),
-                "stream": "false",
-            }
-
-            with open(file_path, "rb") as audio_file:
-                files = {"file": audio_file}
-                response = requests.post(
-                    self.API_URL,
-                    headers=headers,
-                    data=payload,
-                    files=files,
-                    timeout=60,
-                )
-
-            if response.status_code == 200:
-                result = response.json()
-                text = result.get("text", "")
-                lg.info(f"[ASRController] Transcribed file: {text[:50]}...")
-                return text
-            else:
-                lg.error(
-                    f"[ASRController] API error: {response.status_code} - "
-                    f"{response.text}"
-                )
-                return None
-
-        except requests.RequestException as e:
-            lg.error(f"[ASRController] Request failed: {e}")
-            return None
-        except FileNotFoundError:
-            lg.error(f"[ASRController] File not found: {file_path}")
-            return None
-
-    def _audio_to_wav(
-        self,
-        audio_data: np.ndarray,
-        sample_rate: int,
-    ) -> bytes:
-        """
-        Convert numpy audio array to WAV bytes.
-
-        Args:
-            audio_data: Audio data as int16 numpy array
-            sample_rate: Sample rate in Hz
-
-        Returns:
-            WAV file data as bytes
-        """
-        buffer = io.BytesIO()
-
-        with wave.open(buffer, "wb") as wav_file:
-            wav_file.setnchannels(self.CHANNELS)
-            wav_file.setsampwidth(self.SAMPLE_WIDTH)
-            wav_file.setframerate(sample_rate)
-
-            # Ensure int16 format
-            if audio_data.dtype != np.int16:
-                audio_data = audio_data.astype(np.int16)
-
-            wav_file.writeframes(audio_data.tobytes())
-
-        buffer.seek(0)
-        return buffer.read()
-
-    def check_api_key(self) -> bool:
-        """
-        Check if API key is configured.
-
-        Returns:
-            True if API key is set, False otherwise
-        """
-        return bool(self.api_key)
-
-
-def test_asr():
-    """Test ASR with a sample file."""
-    import pathlib
-
-    # Find test audio file
-    script_dir = pathlib.Path(__file__).parent.parent.parent
-    test_file = script_dir / "asset" / "test_audio.wav"
-
-    if not test_file.exists():
-        lg.error(f"Test file not found: {test_file}")
-        return
-
-    controller = ASRController()
-
-    if not controller.check_api_key():
-        lg.error("API key not configured")
-        return
-
-    result = controller.transcribe_file(str(test_file))
-    if result:
-        print(f"Transcription: {result}")
-    else:
-        print("Transcription failed")
-
-
-if __name__ == "__main__":
-    test_asr()
-
+    def transcribe_file(self, file_path: str):
+        """Transcribe audio file."""
+        return self._controller.transcribe_file(file_path)

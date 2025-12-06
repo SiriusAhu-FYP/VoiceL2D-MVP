@@ -12,7 +12,7 @@ This module provides a WebSocket server that:
 import asyncio
 import base64
 import json
-from typing import Callable, Optional, Set
+from typing import Any, Callable, Optional, Set
 
 import websockets
 from loguru import logger as lg
@@ -105,14 +105,24 @@ class AudioWebSocketServer:
                         # Handle text input from frontend
                         text = data.get("text", "").strip()
                         if text and self._on_text_input:
-                            lg.info(f"[AudioWebSocketServer] Received text input: {text[:50]}...")
-                            # Run callback in a way that doesn't block WebSocket
-                            asyncio.create_task(
-                                self._handle_text_input_async(text)
+                            lg.info(
+                                f"[AudioWebSocketServer] Received text input: {text[:50]}..."
                             )
+                            # Send raw JSON message to handler
+                            asyncio.create_task(self._handle_text_input_async(message))
+
+                    elif msg_type == "command":
+                        # Handle command from frontend
+                        if self._on_text_input:
+                            lg.debug(
+                                f"[AudioWebSocketServer] Received command: {data.get('command')}"
+                            )
+                            asyncio.create_task(self._handle_text_input_async(message))
 
                 except json.JSONDecodeError:
-                    lg.warning(f"[AudioWebSocketServer] Invalid JSON received: {message}")
+                    lg.warning(
+                        f"[AudioWebSocketServer] Invalid JSON received: {message}"
+                    )
 
         except websockets.exceptions.ConnectionClosed:
             pass
@@ -228,6 +238,44 @@ class AudioWebSocketServer:
         await self._broadcast(msg)
         lg.debug(f"[AudioWebSocketServer] Sent status: {status}")
 
+    async def send_voices_list(self, voices: list[dict[str, Any]]) -> None:
+        """
+        Send list of available voices to frontend.
+
+        Args:
+            voices: List of voice info dicts
+        """
+        if not self.clients:
+            return
+
+        msg = json.dumps({
+            "type": "voices_list",
+            "voices": voices,
+        })
+
+        await self._broadcast(msg)
+        lg.debug(f"[AudioWebSocketServer] Sent voices list ({len(voices)} voices)")
+
+    async def send_command_response(self, command: str, response: dict) -> None:
+        """
+        Send response to a command from frontend.
+
+        Args:
+            command: Original command name
+            response: Response data
+        """
+        if not self.clients:
+            return
+
+        msg = json.dumps({
+            "type": "command_response",
+            "command": command,
+            "response": response,
+        })
+
+        await self._broadcast(msg)
+        lg.debug(f"[AudioWebSocketServer] Sent command response: {command}")
+
     async def _wait_for_playback(self, timeout: float = 30.0) -> None:
         """
         Wait for playback to complete with timeout.
@@ -270,7 +318,9 @@ class AudioWebSocketServer:
             self.host,
             self.port,
         )
-        lg.info(f"[AudioWebSocketServer] Server started on ws://{self.host}:{self.port}")
+        lg.info(
+            f"[AudioWebSocketServer] Server started on ws://{self.host}:{self.port}"
+        )
 
     async def stop(self) -> None:
         """Stop the WebSocket server."""

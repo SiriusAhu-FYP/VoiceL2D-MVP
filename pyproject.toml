@@ -1,7 +1,7 @@
 [project]
 name = "voicel2d-mvp"
 version = "0.1.0"
-description = "Add your description here"
+description = "Voice-controlled Live2D application with LLM, ASR and TTS"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -19,3 +19,20 @@ dependencies = [
     "webrtcvad>=2.0.10",
     "websockets>=12.0",
 ]
+
+[project.optional-dependencies]
+# Local ASR using Faster-Whisper (requires PyTorch)
+# Install with: uv sync --extra local-asr
+local-asr = ["faster-whisper>=1.0.0", "torch>=2.0.0"]
+
+[tool.uv]
+# Configure PyTorch to use CUDA 11.8 index
+# This ensures GPU-accelerated PyTorch is installed for local ASR
+
+[[tool.uv.index]]
+name = "pytorch-cu118"
+url = "https://download.pytorch.org/whl/cu118"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu118" }
