@@ -35,27 +35,33 @@ from utils import (
     ContinuousVAD,
     TTSController,
     VoiceManager,
+    config,
     create_asr_controller,
 )
 
 # region ==== Config ====
 load_dotenv()
 
-# LLM Configuration
+# LLM Configuration (API key from .env, rest from config.toml)
 API_KEY = os.getenv("ZHIPU_API_KEY")
-BASE_URL = "https://open.bigmodel.cn/api/paas/v4/"
-MODEL_NAME = "glm-4-flash"
+BASE_URL = config.llm_base_url
+MODEL_NAME = config.llm_model
 
 # MCP Server Configuration
-MCP_SERVER_URL = "http://localhost:8848/mcp"
+MCP_SERVER_URL = config.mcp_server_url
 
 # WebSocket Configuration
-WEBSOCKET_HOST = "localhost"
-WEBSOCKET_PORT = 7789
+WEBSOCKET_HOST = config.websocket_host
+WEBSOCKET_PORT = config.websocket_port
 
 # VAD Configuration
-VAD_AGGRESSIVENESS = 2  # 0-3, higher = more aggressive
-SILENCE_THRESHOLD = 0.8  # seconds of silence to end speech
+VAD_AGGRESSIVENESS = config.vad_aggressiveness
+SILENCE_THRESHOLD = config.vad_silence_threshold
+
+# Audio Configuration
+AUDIO_SAMPLE_RATE = config.audio_sample_rate
+AUDIO_CHANNELS = config.audio_channels
+AUDIO_BLOCK_SIZE = config.audio_block_size
 
 # endregion
 
@@ -125,7 +131,6 @@ class VoiceL2DClient:
 
     def __init__(self):
         """Initialize the VoiceL2D client."""
-        lg.info("[VoiceL2DClient] Initializing...")
 
         # LLM client
         self.llm = OpenAI(api_key=API_KEY, base_url=BASE_URL)
@@ -144,14 +149,14 @@ class VoiceL2DClient:
 
         # Audio recorder
         self.recorder = AudioRecorder(
-            sample_rate=16000,
-            channels=1,
-            block_size=480,
+            sample_rate=AUDIO_SAMPLE_RATE,
+            channels=AUDIO_CHANNELS,
+            block_size=AUDIO_BLOCK_SIZE,
         )
 
         # VAD detector
         self.vad = ContinuousVAD(
-            sample_rate=16000,
+            sample_rate=AUDIO_SAMPLE_RATE,
             aggressiveness=VAD_AGGRESSIVENESS,
             silence_threshold=SILENCE_THRESHOLD,
         )
@@ -180,8 +185,6 @@ class VoiceL2DClient:
 
         # Event loop reference (set when run() starts)
         self._event_loop: Optional[asyncio.AbstractEventLoop] = None
-
-        lg.info("[VoiceL2DClient] Initialized successfully")
 
     def _ensure_async_primitives(self) -> None:
         """Ensure asyncio primitives are created."""
@@ -249,7 +252,7 @@ class VoiceL2DClient:
         if self._loaded_voice_name == current_voice_name:
             return True
 
-        lg.info(f"[VoiceL2DClient] Loading voice: {current_voice_name}")
+        lg.debug(f"[TTS] Loading voice: {current_voice_name}")
         if self.tts.load_voice(voice_config):
             self._loaded_voice_name = current_voice_name
             return True
@@ -271,11 +274,11 @@ class VoiceL2DClient:
             lg.warning("[VoiceL2DClient] No sentences to speak")
             return
 
-        lg.info(f"[VoiceL2DClient] Speaking {len(sentences)} sentence(s)")
+        lg.debug(f"[TTS] Speaking {len(sentences)} sentence(s)")
         await self.ws_server.send_status("speaking")
 
         for i, sentence in enumerate(sentences):
-            lg.debug(f"[VoiceL2DClient] TTS: {sentence[:30]}...")
+            lg.debug(f"[TTS] Generating: {sentence[:30]}...")
             audio_data = self.tts.generate_audio(sentence, voice_config)
 
             if audio_data:
@@ -304,7 +307,7 @@ class VoiceL2DClient:
         """Switch to a different TTS voice."""
         if self.voice_manager.set_current_voice(voice_name):
             if self._loaded_voice_name != voice_name:
-                lg.info(f"[VoiceL2DClient] Voice switched to: {voice_name}")
+                lg.info(f"[Voice] Switched to: {voice_name}")
             return True
         return False
 
@@ -319,14 +322,14 @@ class VoiceL2DClient:
             await self.ws_server.send_user_message(text, source)
             await self.ws_server.send_status("processing")
 
-            lg.info(f"[VoiceL2DClient] Processing input ({source}): {text[:50]}...")
+            lg.info(f"[Input] ({source}) {text[:40]}...")
 
             if self._tools_config:
                 response = await self.chat_with_tools(text, self._tools_config)
             else:
                 response = await self.chat(text)
 
-            lg.info(f"[VoiceL2DClient] LLM response: {response[:50]}...")
+            lg.info(f"[LLM] {response[:50]}...")
 
             await self.ws_server.send_ai_message(response)
 
@@ -393,7 +396,7 @@ class VoiceL2DClient:
                 tool_name = tool_call.function.name
                 tool_args = json.loads(tool_call.function.arguments)
 
-                lg.info(f"[VoiceL2DClient] Calling MCP tool: {tool_name}")
+                lg.info(f"[MCP] Tool: {tool_name}")
                 result = await self._call_mcp_tool(tool_name, tool_args)
 
                 self.messages.append({
@@ -446,13 +449,13 @@ class VoiceL2DClient:
         if not self._is_listening:
             return
 
-        lg.info(f"[VoiceL2DClient] Speech detected ({len(audio_data)} samples)")
+        lg.debug(f"[VAD] Speech detected ({len(audio_data)} samples)")
 
         await self.ws_server.send_status("processing", "Transcribing...")
         text = self.asr.transcribe(audio_data, sample_rate=16000)
 
         if text and text.strip():
-            lg.info(f"[VoiceL2DClient] ASR result: {text}")
+            lg.info(f"[ASR] {text}")
             self._ensure_async_primitives()
             assert self._text_input_queue is not None
             await self._text_input_queue.put(("voice", text))
@@ -537,14 +540,25 @@ class VoiceL2DClient:
 
             if msg_type == "text_input":
                 text = data.get("text", "").strip()
-                if text:
+                if text and self._event_loop:
                     self._ensure_async_primitives()
                     assert self._text_input_queue is not None
-                    asyncio.create_task(self._text_input_queue.put(("text", text)))
+                    # Schedule on event loop from callback thread
+                    self._event_loop.call_soon_threadsafe(
+                        lambda t=text: asyncio.create_task(
+                            self._text_input_queue.put(("text", t))  # type: ignore
+                        )
+                    )
 
             elif msg_type == "command":
                 command = data.get("command")
-                asyncio.create_task(self._handle_command_async(command, data))
+                if command and self._event_loop:
+                    # Schedule on event loop from callback thread
+                    self._event_loop.call_soon_threadsafe(
+                        lambda c=command, d=data: asyncio.create_task(
+                            self._handle_command_async(c, d)
+                        )
+                    )
 
         except json.JSONDecodeError:
             lg.warning("[VoiceL2DClient] Invalid JSON from frontend")
@@ -614,7 +628,7 @@ class VoiceL2DClient:
 
                 # Log available voices
                 voices = self.voice_manager.list_voices()
-                lg.info(f"[VoiceL2DClient] Available voices: {voices}")
+                lg.info(f"[Voices] {voices}")
                 lg.info(
                     f"[VoiceL2DClient] Current voice: {self.voice_manager.current_voice}"
                 )

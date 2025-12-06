@@ -1,18 +1,52 @@
-[Pimon]
+[llm]
+base_url = "https://open.bigmodel.cn/api/paas/v4/"
+model = "glm-4-flash"
+
+[asr]
+# SiliconCloud - SenseVoice (free at 2025.12.07)
+api_url = "https://api.siliconflow.cn/v1/audio/transcriptions"
+api_model = "FunAudioLLM/SenseVoiceSmall"
+
+# Local mode settings (Faster-Whisper)
+local_model = "base"  # tiny, base, small, medium, large-v3
+local_language = "zh" # Language code or empty for auto-detect
+
+[mcp]
+server_url = "http://localhost:8848/mcp"
+
+[websocket]
+host = "localhost"
+port = 7789
+
+[vad]
+aggressiveness = 2      # 0-3, higher = more aggressive filtering; default 2
+silence_threshold = 0.8 # seconds of silence to end speech segment; default 0.8
+
+[audio]
+sample_rate = 16000 # sample rate; default 16000
+channels = 1        # channels; default 1
+block_size = 480    # samples per block; default 480
+
+# ============================================
+# TTS Voice Profiles
+# ============================================
+# Each voice profile has its own section with [voices.NAME]
+
+[voices.Pimon]
 gpt_weights_path = "/home/ahu/GPT-SoVITS-Inference/派蒙/派蒙-e10.ckpt"
 sovits_weights_path = "/home/ahu/GPT-SoVITS-Inference/派蒙/派蒙_e10_s19390.pth"
 ref_audio_path = "/home/ahu/GPT-SoVITS-Inference/派蒙/平静-好耶！《特尔克西的奇幻历险》出发咯！.wav"
 prompt_text = "好耶！《特尔克西的奇幻历险》出发咯！"
 prompt_lang = "zh"
 
-[XiangLing]
+[voices.XiangLing]
 gpt_weights_path = "/home/ahu/GPT-SoVITS-Inference/香菱/香菱-e10.ckpt"
 sovits_weights_path = "/home/ahu/GPT-SoVITS-Inference/香菱/香菱_e10_s630.pth"
 ref_audio_path = "/home/ahu/GPT-SoVITS-Inference/香菱/哇，这么多人都在这里玩牌…他们的肚子会不会饿了呀？.wav"
 prompt_text = "哇，这么多人都在这里玩牌…他们的肚子会不会饿了呀？"
 prompt_lang = "zh"
 
-[Sucrose]
+[voices.Sucrose]
 gpt_weights_path = "/home/ahu/GPT-SoVITS-Inference/砂糖/砂糖-e10.ckpt"
 sovits_weights_path = "/home/ahu/GPT-SoVITS-Inference/砂糖/砂糖_e10_s590.pth"
 ref_audio_path = "/home/ahu/GPT-SoVITS-Inference/砂糖/是的，他致力于探究世界的真相，已经有了很多很多伟大的成果。.wav"

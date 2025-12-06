@@ -3,6 +3,7 @@
 from .asr_base import ASRBase
 from .asr_controller import ASRController, create_asr_controller
 from .audio_recorder import AudioBuffer, AudioRecorder
+from .config_loader import ConfigLoader, config
 from .tts_controller import TTSController
 from .vad_detector import ContinuousVAD, VADDetector
 from .voice_manager import VoiceManager
@@ -14,9 +15,11 @@ __all__ = [
     "AudioBuffer",
     "AudioRecorder",
     "AudioWebSocketServer",
+    "ConfigLoader",
     "ContinuousVAD",
     "TTSController",
     "VADDetector",
     "VoiceManager",
+    "config",
     "create_asr_controller",
 ]

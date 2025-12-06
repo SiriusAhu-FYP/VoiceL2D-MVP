@@ -17,6 +17,7 @@ from dotenv import load_dotenv
 from loguru import logger as lg
 
 from .asr_base import ASRBase
+from .config_loader import config
 
 # Load environment variables
 load_dotenv()
@@ -30,12 +31,6 @@ class ASRApiController(ASRBase):
     Requires SILICONCLOUD_API_KEY environment variable.
     """
 
-    # API endpoint
-    API_URL = "https://api.siliconflow.cn/v1/audio/transcriptions"
-
-    # Model name
-    MODEL = "FunAudioLLM/SenseVoiceSmall"
-
     def __init__(self, api_key: Optional[str] = None):
         """
         Initialize the API ASR controller.
@@ -43,18 +38,19 @@ class ASRApiController(ASRBase):
         Args:
             api_key: SiliconCloud API key. If None, reads from environment.
         """
+        # Load from config
+        self.api_url = config.asr_api_url
+        self.model = config.asr_api_model
+
         self.api_key = (
             api_key
             or os.getenv("SILICONCLOUD_API_KEY")
             or os.getenv("SILICONFLOW_API_KEY")  # Backward compatibility
         )
         if not self.api_key:
-            lg.warning(
-                "[ASRApiController] No API key found. "
-                "Set SILICONCLOUD_API_KEY environment variable."
-            )
+            lg.warning("[ASR] No API key. Set SILICONCLOUD_API_KEY in .env")
         else:
-            lg.info("[ASRApiController] Initialized with SiliconCloud SenseVoice API")
+            lg.info(f"[ASR] API mode: {self.model}")
 
     @property
     def name(self) -> str:
@@ -95,12 +91,12 @@ class ASRApiController(ASRBase):
 
             # Make API request
             headers = {"Authorization": f"Bearer {self.api_key}"}
-            data = {"model": self.MODEL}
+            data = {"model": self.model}
 
             with open(temp_path, "rb") as audio_file:
                 files = {"file": ("audio.wav", audio_file, "audio/wav")}
                 response = requests.post(
-                    self.API_URL,
+                    self.api_url,
                     headers=headers,
                     data=data,
                     files=files,
@@ -153,12 +149,12 @@ class ASRApiController(ASRBase):
 
         try:
             headers = {"Authorization": f"Bearer {self.api_key}"}
-            data = {"model": self.MODEL}
+            data = {"model": self.model}
 
             with open(file_path, "rb") as audio_file:
                 files = {"file": (os.path.basename(file_path), audio_file, "audio/wav")}
                 response = requests.post(
-                    self.API_URL,
+                    self.api_url,
                     headers=headers,
                     data=data,
                     files=files,

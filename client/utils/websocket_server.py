@@ -46,8 +46,6 @@ class AudioWebSocketServer:
         # Callbacks for handling incoming messages
         self._on_text_input: Optional[Callable[[str], None]] = None
 
-        lg.info(f"[AudioWebSocketServer] Initialized on {host}:{port}")
-
     def set_on_text_input(self, callback: Optional[Callable[[str], None]]) -> None:
         """
         Set callback for text input received from frontend.
@@ -60,16 +58,12 @@ class AudioWebSocketServer:
     async def _register(self, websocket: WebSocketServerProtocol) -> None:
         """Register a new client connection."""
         self.clients.add(websocket)
-        lg.info(
-            f"[AudioWebSocketServer] Client connected. Total clients: {len(self.clients)}"
-        )
+        lg.debug(f"[WS] Client connected ({len(self.clients)} total)")
 
     async def _unregister(self, websocket: WebSocketServerProtocol) -> None:
         """Unregister a client connection."""
         self.clients.discard(websocket)
-        lg.info(
-            f"[AudioWebSocketServer] Client disconnected. Total clients: {len(self.clients)}"
-        )
+        lg.debug(f"[WS] Client disconnected ({len(self.clients)} total)")
 
     async def _handler(self, websocket: WebSocketServerProtocol) -> None:
         """Handle incoming WebSocket connections."""
@@ -96,27 +90,21 @@ class AudioWebSocketServer:
                         await websocket.send(json.dumps({"type": "pong"}))
 
                     elif msg_type == "ready":
-                        lg.debug("[AudioWebSocketServer] Client ready for audio")
+                        pass  # Silent - too frequent
 
                     elif msg_type == "playback_complete":
-                        lg.debug("[AudioWebSocketServer] Client finished playback")
+                        pass  # Silent - too frequent
 
                     elif msg_type == "text_input":
                         # Handle text input from frontend
                         text = data.get("text", "").strip()
                         if text and self._on_text_input:
-                            lg.info(
-                                f"[AudioWebSocketServer] Received text input: {text[:50]}..."
-                            )
-                            # Send raw JSON message to handler
+                            lg.info(f"[WS] Text: {text[:30]}...")
                             asyncio.create_task(self._handle_text_input_async(message))
 
                     elif msg_type == "command":
                         # Handle command from frontend
                         if self._on_text_input:
-                            lg.debug(
-                                f"[AudioWebSocketServer] Received command: {data.get('command')}"
-                            )
                             asyncio.create_task(self._handle_text_input_async(message))
 
                 except json.JSONDecodeError:
@@ -197,7 +185,6 @@ class AudioWebSocketServer:
         })
 
         await self._broadcast(message)
-        lg.info(f"[AudioWebSocketServer] Sent user message ({source}): {text[:50]}...")
 
     async def send_ai_message(self, text: str) -> None:
         """
@@ -216,7 +203,6 @@ class AudioWebSocketServer:
         })
 
         await self._broadcast(message)
-        lg.info(f"[AudioWebSocketServer] Sent AI message: {text[:50]}...")
 
     async def send_status(self, status: str, message: str = "") -> None:
         """
@@ -236,7 +222,6 @@ class AudioWebSocketServer:
         })
 
         await self._broadcast(msg)
-        lg.debug(f"[AudioWebSocketServer] Sent status: {status}")
 
     async def send_voices_list(self, voices: list[dict[str, Any]]) -> None:
         """
@@ -254,7 +239,6 @@ class AudioWebSocketServer:
         })
 
         await self._broadcast(msg)
-        lg.debug(f"[AudioWebSocketServer] Sent voices list ({len(voices)} voices)")
 
     async def send_command_response(self, command: str, response: dict) -> None:
         """
@@ -274,7 +258,6 @@ class AudioWebSocketServer:
         })
 
         await self._broadcast(msg)
-        lg.debug(f"[AudioWebSocketServer] Sent command response: {command}")
 
     async def _wait_for_playback(self, timeout: float = 30.0) -> None:
         """

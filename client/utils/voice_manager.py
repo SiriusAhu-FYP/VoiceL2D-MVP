@@ -1,16 +1,16 @@
 """
 Voice Manager - Handle voice configuration and switching.
 
-This module manages voice profiles from config.toml, allowing
-dynamic switching between different TTS voices.
+This module manages voice profiles from the root config.toml,
+allowing dynamic switching between different TTS voices.
 """
 
-import tomllib
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Optional
 
 from loguru import logger as lg
+
+from .config_loader import config
 
 
 @dataclass
@@ -28,58 +28,43 @@ class VoiceConfig:
 class VoiceManager:
     """
     Manager for voice profiles loaded from config.toml.
-    
+
     Handles loading, listing, and retrieving voice configurations
     for the TTS system.
     """
 
-    def __init__(self, config_path: Optional[Path] = None):
-        """
-        Initialize the voice manager.
-        
-        Args:
-            config_path: Path to config.toml. If None, uses default location.
-        """
-        if config_path is None:
-            config_path = Path(__file__).parent / "config.toml"
-        
-        self.config_path = config_path
+    def __init__(self):
+        """Initialize the voice manager."""
         self.voices: dict[str, VoiceConfig] = {}
         self.current_voice: Optional[str] = None
-        self._load_config()
+        self._load_voices()
 
-    def _load_config(self) -> None:
-        """Load voice configurations from TOML file."""
-        try:
-            with open(self.config_path, "rb") as f:
-                config_data = tomllib.load(f)
-            
-            for voice_name, voice_data in config_data.items():
-                self.voices[voice_name] = VoiceConfig(
-                    name=voice_name,
-                    gpt_weights_path=voice_data.get("gpt_weights_path", ""),
-                    sovits_weights_path=voice_data.get("sovits_weights_path", ""),
-                    ref_audio_path=voice_data.get("ref_audio_path", ""),
-                    prompt_text=voice_data.get("prompt_text", ""),
-                    prompt_lang=voice_data.get("prompt_lang", "zh"),
-                )
-            
-            lg.info(f"[VoiceManager] Loaded {len(self.voices)} voice profiles: {list(self.voices.keys())}")
-            
-            # Set first voice as default if available
-            if self.voices:
-                self.current_voice = next(iter(self.voices.keys()))
-                lg.info(f"[VoiceManager] Default voice set to: {self.current_voice}")
-                
-        except FileNotFoundError:
-            lg.warning(f"[VoiceManager] Warning: config.toml not found at {self.config_path}")
-        except tomllib.TOMLDecodeError as e:
-            lg.error(f"[VoiceManager] Error parsing config.toml: {e}")
+    def _load_voices(self) -> None:
+        """Load voice configurations from config.toml."""
+        voices_data = config.get_voices()
+
+        for voice_name, voice_data in voices_data.items():
+            self.voices[voice_name] = VoiceConfig(
+                name=voice_name,
+                gpt_weights_path=voice_data.get("gpt_weights_path", ""),
+                sovits_weights_path=voice_data.get("sovits_weights_path", ""),
+                ref_audio_path=voice_data.get("ref_audio_path", ""),
+                prompt_text=voice_data.get("prompt_text", ""),
+                prompt_lang=voice_data.get("prompt_lang", "zh"),
+            )
+
+        lg.info(
+            f"[VoiceManager] Loaded {len(self.voices)} voices: {list(self.voices.keys())}"
+        )
+
+        # Set first voice as default if available
+        if self.voices:
+            self.current_voice = next(iter(self.voices.keys()))
 
     def list_voices(self) -> list[str]:
         """
         List all available voice names.
-        
+
         Returns:
             List of voice profile names
         """
@@ -88,10 +73,10 @@ class VoiceManager:
     def get_voice(self, voice_name: str) -> Optional[VoiceConfig]:
         """
         Get configuration for a specific voice.
-        
+
         Args:
             voice_name: Name of the voice profile
-            
+
         Returns:
             VoiceConfig if found, None otherwise
         """
@@ -100,7 +85,7 @@ class VoiceManager:
     def get_current_voice(self) -> Optional[VoiceConfig]:
         """
         Get the currently selected voice configuration.
-        
+
         Returns:
             Current VoiceConfig if set, None otherwise
         """
@@ -111,29 +96,28 @@ class VoiceManager:
     def set_current_voice(self, voice_name: str) -> bool:
         """
         Set the current voice by name.
-        
+
         Args:
             voice_name: Name of the voice to select
-            
+
         Returns:
             True if voice was found and set, False otherwise
         """
         if voice_name in self.voices:
             self.current_voice = voice_name
-            lg.info(f"[VoiceManager] Switched to voice: {voice_name}")
+            lg.info(f"[VoiceManager] Switched to: {voice_name}")
             return True
         else:
             lg.warning(f"[VoiceManager] Voice not found: {voice_name}")
-            lg.debug(f"[VoiceManager] Available voices: {list(self.voices.keys())}")
             return False
 
     def get_voice_info(self, voice_name: str) -> Optional[dict]:
         """
         Get voice information as a dictionary.
-        
+
         Args:
             voice_name: Name of the voice profile
-            
+
         Returns:
             Dictionary with voice info, or None if not found
         """
@@ -148,7 +132,3 @@ class VoiceManager:
                 "prompt_lang": voice.prompt_lang,
             }
         return None
-
-
-
-

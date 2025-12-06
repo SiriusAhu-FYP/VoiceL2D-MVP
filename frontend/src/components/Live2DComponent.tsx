@@ -269,16 +269,25 @@ export const Live2DComponent: React.FC = () => {
             ctx.resume();
         }
 
-        // Create source node if not exists
-        if (!sourceNodeRef.current) {
+        // Each new audio element needs its own MediaElementSource
+        // Disconnect previous source if exists
+        if (sourceNodeRef.current) {
             try {
-                sourceNodeRef.current = ctx.createMediaElementSource(audioElement);
-                sourceNodeRef.current.connect(analyserRef.current!);
-                analyserRef.current!.connect(ctx.destination);
-                console.log('[LipSync] Audio connected to analyser');
-            } catch (err) {
-                console.warn('[LipSync] Could not create media element source:', err);
+                sourceNodeRef.current.disconnect();
+            } catch {
+                // Ignore disconnect errors
             }
+            sourceNodeRef.current = null;
+        }
+
+        // Create new source node for this audio element
+        try {
+            sourceNodeRef.current = ctx.createMediaElementSource(audioElement);
+            sourceNodeRef.current.connect(analyserRef.current!);
+            analyserRef.current!.connect(ctx.destination);
+        } catch (err) {
+            // If this audio element was already connected, just log and continue
+            console.warn('[LipSync] Could not create media element source:', err);
         }
     }, [initAudioContext]);
 

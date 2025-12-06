@@ -8,19 +8,15 @@ Requires optional dependencies: `uv sync --extra local-asr`
 """
 
 import io
-import os
 import tempfile
 import wave
 from typing import Optional
 
 import numpy as np
-from dotenv import load_dotenv
 from loguru import logger as lg
 
 from .asr_base import ASRBase
-
-# Load environment variables
-load_dotenv()
+from .config_loader import config
 
 
 class ASRLocalController(ASRBase):
@@ -29,10 +25,6 @@ class ASRLocalController(ASRBase):
 
     This implementation runs entirely locally without network access.
     Automatically uses GPU if available, falls back to CPU otherwise.
-
-    Configuration via environment variables:
-    - WHISPER_MODEL: Model size (tiny, base, small, medium, large-v3)
-    - WHISPER_LANGUAGE: Language code (e.g., 'zh', 'en') or empty for auto
     """
 
     # Model cache (singleton pattern for efficiency)
@@ -48,11 +40,11 @@ class ASRLocalController(ASRBase):
         Initialize the local ASR controller.
 
         Args:
-            model_name: Whisper model name. If None, reads from WHISPER_MODEL env.
-            language: Target language code. If None, reads from WHISPER_LANGUAGE env.
+            model_name: Whisper model name. If None, reads from config.
+            language: Target language code. If None, reads from config.
         """
-        self.model_name = model_name or os.getenv("WHISPER_MODEL", "base")
-        self.language = language or os.getenv("WHISPER_LANGUAGE", "zh") or None
+        self.model_name = model_name or config.asr_local_model
+        self.language = language or config.asr_local_language or None
 
         # Determine device and compute type
         self.device, self.compute_type = self._detect_device()
@@ -166,9 +158,7 @@ class ASRLocalController(ASRBase):
             # Convert to WAV and save to temp file
             wav_bytes = self._audio_to_wav(audio_data, sample_rate)
 
-            with tempfile.NamedTemporaryFile(
-                suffix=".wav", delete=False
-            ) as temp_file:
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
                 temp_file.write(wav_bytes)
                 temp_path = temp_file.name
 
@@ -288,4 +278,3 @@ class ASRLocalController(ASRBase):
 
         buffer.seek(0)
         return buffer.read()
-

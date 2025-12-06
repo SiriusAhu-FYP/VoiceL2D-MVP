@@ -71,7 +71,9 @@ class VADDetector:
         # State tracking
         self._is_speaking = False
         self._silence_frames = 0
-        self._frames_for_silence = int(silence_threshold * 1000 / self.FRAME_DURATION_MS)
+        self._frames_for_silence = int(
+            silence_threshold * 1000 / self.FRAME_DURATION_MS
+        )
 
         # Speech buffer
         self._speech_buffer: list[np.ndarray] = []
@@ -79,12 +81,6 @@ class VADDetector:
         # Callbacks
         self._on_speech_start: Optional[Callable[[], None]] = None
         self._on_speech_end: Optional[Callable[[np.ndarray], None]] = None
-
-        lg.info(
-            f"[VADDetector] Initialized: {sample_rate}Hz, "
-            f"aggressiveness={aggressiveness}, "
-            f"silence_threshold={silence_threshold}s"
-        )
 
     def set_callbacks(
         self,
@@ -314,4 +310,3 @@ class ContinuousVAD:
     def is_speaking(self) -> bool:
         """Check if currently detecting speech."""
         return self.vad.is_speaking
-

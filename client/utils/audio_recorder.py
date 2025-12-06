@@ -55,11 +55,6 @@ class AudioRecorder:
         self._stream: Optional[sd.InputStream] = None
         self._callback: Optional[Callable[[np.ndarray], None]] = None
 
-        lg.info(
-            f"[AudioRecorder] Initialized: {sample_rate}Hz, "
-            f"{channels}ch, block_size={block_size}"
-        )
-
     def _audio_callback(
         self,
         indata: np.ndarray,
@@ -113,7 +108,7 @@ class AudioRecorder:
             )
             self._stream.start()
             self._recording = True
-            lg.info("[AudioRecorder] Recording started")
+            lg.debug("[AudioRecorder] Recording started")
             return True
         except Exception as e:
             lg.error(f"[AudioRecorder] Failed to start recording: {e}")
@@ -132,7 +127,7 @@ class AudioRecorder:
             self._stream = None
 
         self._callback = None
-        lg.info("[AudioRecorder] Recording stopped")
+        lg.debug("[AudioRecorder] Recording stopped")
 
     def get_audio_block(self, timeout: float = 1.0) -> Optional[np.ndarray]:
         """
@@ -290,4 +285,3 @@ class AudioBuffer:
     def sample_count(self) -> int:
         """Get total number of samples in buffer."""
         return self._total_samples
-

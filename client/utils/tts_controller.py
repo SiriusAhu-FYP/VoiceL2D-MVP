@@ -44,7 +44,6 @@ class TTSController:
         self.host = host or os.getenv("GPT_SOVITS_HOST", "http://localhost:9880")
         self._current_gpt_weights: Optional[str] = None
         self._current_sovits_weights: Optional[str] = None
-        lg.info(f"[TTSController] Initialized with host: {self.host}")
 
     def set_gpt_weights(self, weights_path: str) -> bool:
         """
