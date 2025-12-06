@@ -13,6 +13,7 @@ import json
 from typing import Optional, Set
 
 import websockets
+from loguru import logger as lg
 from websockets.server import WebSocketServerProtocol
 
 from .tts_controller import TTSController
@@ -39,19 +40,19 @@ class AudioWebSocketServer:
         self.clients: Set[WebSocketServerProtocol] = set()
         self._server: Optional[websockets.WebSocketServer] = None
         self._running = False
-        print(f"[AudioWebSocketServer] Initialized on {host}:{port}")
+        lg.info(f"[AudioWebSocketServer] Initialized on {host}:{port}")
 
     async def _register(self, websocket: WebSocketServerProtocol) -> None:
         """Register a new client connection."""
         self.clients.add(websocket)
-        print(
+        lg.info(
             f"[AudioWebSocketServer] Client connected. Total clients: {len(self.clients)}"
         )
 
     async def _unregister(self, websocket: WebSocketServerProtocol) -> None:
         """Unregister a client connection."""
         self.clients.discard(websocket)
-        print(
+        lg.info(
             f"[AudioWebSocketServer] Client disconnected. Total clients: {len(self.clients)}"
         )
 
@@ -79,12 +80,12 @@ class AudioWebSocketServer:
                     if msg_type == "ping":
                         await websocket.send(json.dumps({"type": "pong"}))
                     elif msg_type == "ready":
-                        print("[AudioWebSocketServer] Client ready for audio")
+                        lg.debug("[AudioWebSocketServer] Client ready for audio")
                     elif msg_type == "playback_complete":
-                        print("[AudioWebSocketServer] Client finished playback")
+                        lg.debug("[AudioWebSocketServer] Client finished playback")
 
                 except json.JSONDecodeError:
-                    print(f"[AudioWebSocketServer] Invalid JSON received: {message}")
+                    lg.warning(f"[AudioWebSocketServer] Invalid JSON received: {message}")
 
         except websockets.exceptions.ConnectionClosed:
             pass
@@ -100,7 +101,7 @@ class AudioWebSocketServer:
             text: The text that was spoken (for display/logging)
         """
         if not self.clients:
-            print("[AudioWebSocketServer] No clients connected, skipping send")
+            lg.warning("[AudioWebSocketServer] No clients connected, skipping send")
             return
 
         # Encode audio as base64 for JSON transport
@@ -119,7 +120,7 @@ class AudioWebSocketServer:
         })
 
         await self._broadcast(message)
-        print(
+        lg.info(
             f"[AudioWebSocketServer] Sent audio ({len(audio_data)} bytes) for: {text[:30]}..."
         )
 
@@ -169,7 +170,7 @@ class AudioWebSocketServer:
             self.host,
             self.port,
         )
-        print(f"[AudioWebSocketServer] Server started on ws://{self.host}:{self.port}")
+        lg.info(f"[AudioWebSocketServer] Server started on ws://{self.host}:{self.port}")
 
     async def stop(self) -> None:
         """Stop the WebSocket server."""
@@ -177,7 +178,7 @@ class AudioWebSocketServer:
         if self._server:
             self._server.close()
             await self._server.wait_closed()
-            print("[AudioWebSocketServer] Server stopped")
+            lg.info("[AudioWebSocketServer] Server stopped")
 
     @property
     def is_running(self) -> bool:
@@ -201,7 +202,7 @@ async def run_standalone_server(host: str = "localhost", port: int = 7789) -> No
     server = AudioWebSocketServer(host, port)
     await server.start()
 
-    print(f"[AudioWebSocketServer] Running standalone on ws://{host}:{port}")
+    lg.info(f"[AudioWebSocketServer] Running standalone on ws://{host}:{port}")
     print("Press Ctrl+C to stop")
 
     try:

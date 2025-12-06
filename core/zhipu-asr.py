@@ -3,6 +3,7 @@ import pathlib
 
 import requests
 from dotenv import load_dotenv
+from loguru import logger as lg
 
 load_dotenv()
 key = os.getenv("API_KEY_ZHIPU")
@@ -20,7 +21,7 @@ headers = {"Authorization": f"Bearer {key}"}
 
 response = requests.post(url, data=payload, files=files, headers=headers)
 
-print(response.json())
+lg.info(response.json())
 
 with open("zhipu-asr_result.txt", "w", encoding="utf-8") as f:
     f.write(response.json().get("text", ""))

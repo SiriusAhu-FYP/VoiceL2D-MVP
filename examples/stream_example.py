@@ -2,6 +2,7 @@ import time
 
 import pyaudio
 import requests
+from loguru import logger as lg
 
 # 1. 配置参数
 # 注意：GPT-SoVITS 默认采样率通常是 32000，如果不对应，声音会变快或变慢（像花栗鼠或巨人）
@@ -35,12 +36,12 @@ def play_stream():
         format=pyaudio.paInt16, channels=CHANNELS, rate=SAMPLE_RATE, output=True
     )
 
-    print(f"🚀 [1] 发起请求... (时间: {time.time()})")
+    lg.info(f"🚀 [1] 发起请求... (时间: {time.time()})")
 
     # stream=True 是 requests 库的关键，不立即下载整个响应体
     with requests.get(base_url, params=params, stream=True) as response:
         response.raise_for_status()
-        print(f"✅ [2] 连接建立! 开始接收数据流... (时间: {time.time()})")
+        lg.info(f"✅ [2] 连接建立! 开始接收数据流... (时间: {time.time()})")
 
         first_chunk = True
 
@@ -49,7 +50,7 @@ def play_stream():
         for chunk in response.iter_content(chunk_size=1024):
             if chunk:
                 if first_chunk:
-                    print(
+                    lg.info(
                         f"🔊 [3] 第一块音频到达! 开始播放... (延迟: {(time.time() - start_time) * 1000:.2f}ms)"
                     )
                     first_chunk = False
@@ -57,7 +58,7 @@ def play_stream():
                 # 直接将原始字节写入声卡缓冲区
                 stream.write(chunk)
 
-    print("\n🏁 播放结束")
+    lg.info("\n🏁 播放结束")
 
     # 清理资源
     stream.stop_stream()
@@ -70,6 +71,6 @@ if __name__ == "__main__":
     try:
         play_stream()
     except KeyboardInterrupt:
-        print("停止播放")
+        lg.info("停止播放")
     except Exception as e:
-        print(f"发生错误: {e}")
+        lg.error(f"发生错误: {e}")

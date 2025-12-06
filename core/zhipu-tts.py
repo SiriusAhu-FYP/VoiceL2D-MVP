@@ -3,6 +3,7 @@ import os
 import requests
 import simpleaudio as sa
 from dotenv import load_dotenv
+from loguru import logger as lg
 
 load_dotenv()
 
@@ -36,9 +37,10 @@ with open(f"./core/zhipu-tts_result/{voice}_tts.wav", "wb") as f:
     f.write(response.content)
 
 # Play the audio
-wave_obj = sa.WaveObject.from_wave_file(f"./core/zhipu-tts_result/{voice}_tts.wav")
-play_obj = wave_obj.play()
-play_obj.wait_done()
+if response.status_code == 200:
+    wave_obj = sa.WaveObject.from_wave_file(f"./core/zhipu-tts_result/{voice}_tts.wav")
+    play_obj = wave_obj.play()
+    play_obj.wait_done()
 else:
-print(f"Failed to get audio. Status code: {response.status_code}")
-print(response.text)
+    lg.error(f"Failed to get audio. Status code: {response.status_code}")
+    lg.error(response.text)

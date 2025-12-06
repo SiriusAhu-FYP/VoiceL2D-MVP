@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from loguru import logger as lg
+
 
 @dataclass
 class VoiceConfig:
@@ -62,17 +64,17 @@ class VoiceManager:
                     prompt_lang=voice_data.get("prompt_lang", "zh"),
                 )
             
-            print(f"[VoiceManager] Loaded {len(self.voices)} voice profiles: {list(self.voices.keys())}")
+            lg.info(f"[VoiceManager] Loaded {len(self.voices)} voice profiles: {list(self.voices.keys())}")
             
             # Set first voice as default if available
             if self.voices:
                 self.current_voice = next(iter(self.voices.keys()))
-                print(f"[VoiceManager] Default voice set to: {self.current_voice}")
+                lg.info(f"[VoiceManager] Default voice set to: {self.current_voice}")
                 
         except FileNotFoundError:
-            print(f"[VoiceManager] Warning: config.toml not found at {self.config_path}")
+            lg.warning(f"[VoiceManager] Warning: config.toml not found at {self.config_path}")
         except tomllib.TOMLDecodeError as e:
-            print(f"[VoiceManager] Error parsing config.toml: {e}")
+            lg.error(f"[VoiceManager] Error parsing config.toml: {e}")
 
     def list_voices(self) -> list[str]:
         """
@@ -118,11 +120,11 @@ class VoiceManager:
         """
         if voice_name in self.voices:
             self.current_voice = voice_name
-            print(f"[VoiceManager] Switched to voice: {voice_name}")
+            lg.info(f"[VoiceManager] Switched to voice: {voice_name}")
             return True
         else:
-            print(f"[VoiceManager] Voice not found: {voice_name}")
-            print(f"[VoiceManager] Available voices: {list(self.voices.keys())}")
+            lg.warning(f"[VoiceManager] Voice not found: {voice_name}")
+            lg.debug(f"[VoiceManager] Available voices: {list(self.voices.keys())}")
             return False
 
     def get_voice_info(self, voice_name: str) -> Optional[dict]:
@@ -146,4 +148,7 @@ class VoiceManager:
                 "prompt_lang": voice.prompt_lang,
             }
         return None
+
+
+
 

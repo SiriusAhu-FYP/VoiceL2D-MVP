@@ -13,6 +13,7 @@ from urllib.parse import urlencode
 
 import requests
 from dotenv import load_dotenv
+from loguru import logger as lg
 
 from .voice_manager import VoiceConfig
 
@@ -43,7 +44,7 @@ class TTSController:
         self.host = host or os.getenv("GPT_SOVITS_HOST", "http://localhost:9880")
         self._current_gpt_weights: Optional[str] = None
         self._current_sovits_weights: Optional[str] = None
-        print(f"[TTSController] Initialized with host: {self.host}")
+        lg.info(f"[TTSController] Initialized with host: {self.host}")
 
     def set_gpt_weights(self, weights_path: str) -> bool:
         """
@@ -56,7 +57,7 @@ class TTSController:
             True if successful, False otherwise
         """
         if self._current_gpt_weights == weights_path:
-            print(f"[TTSController] GPT weights already loaded: {weights_path}")
+            lg.debug(f"[TTSController] GPT weights already loaded: {weights_path}")
             return True
 
         url = f"{self.host}/set_gpt_weights"
@@ -66,13 +67,13 @@ class TTSController:
             response = requests.get(url, params=params, timeout=30)
             if response.status_code == 200:
                 self._current_gpt_weights = weights_path
-                print(f"[TTSController] GPT weights set successfully: {weights_path}")
+                lg.info(f"[TTSController] GPT weights set successfully: {weights_path}")
                 return True
             else:
-                print(f"[TTSController] Failed to set GPT weights: {response.text}")
+                lg.error(f"[TTSController] Failed to set GPT weights: {response.text}")
                 return False
         except requests.RequestException as e:
-            print(f"[TTSController] Error setting GPT weights: {e}")
+            lg.error(f"[TTSController] Error setting GPT weights: {e}")
             return False
 
     def set_sovits_weights(self, weights_path: str) -> bool:
@@ -86,7 +87,7 @@ class TTSController:
             True if successful, False otherwise
         """
         if self._current_sovits_weights == weights_path:
-            print(f"[TTSController] SoVITS weights already loaded: {weights_path}")
+            lg.debug(f"[TTSController] SoVITS weights already loaded: {weights_path}")
             return True
 
         url = f"{self.host}/set_sovits_weights"
@@ -96,15 +97,15 @@ class TTSController:
             response = requests.get(url, params=params, timeout=30)
             if response.status_code == 200:
                 self._current_sovits_weights = weights_path
-                print(
+                lg.info(
                     f"[TTSController] SoVITS weights set successfully: {weights_path}"
                 )
                 return True
             else:
-                print(f"[TTSController] Failed to set SoVITS weights: {response.text}")
+                lg.error(f"[TTSController] Failed to set SoVITS weights: {response.text}")
                 return False
         except requests.RequestException as e:
-            print(f"[TTSController] Error setting SoVITS weights: {e}")
+            lg.error(f"[TTSController] Error setting SoVITS weights: {e}")
             return False
 
     def load_voice(self, voice_config: VoiceConfig) -> bool:
@@ -117,7 +118,7 @@ class TTSController:
         Returns:
             True if both weights loaded successfully, False otherwise
         """
-        print(f"[TTSController] Loading voice: {voice_config.name}")
+        lg.info(f"[TTSController] Loading voice: {voice_config.name}")
 
         gpt_success = self.set_gpt_weights(voice_config.gpt_weights_path)
         if not gpt_success:
@@ -127,7 +128,7 @@ class TTSController:
         if not sovits_success:
             return False
 
-        print(f"[TTSController] Voice loaded successfully: {voice_config.name}")
+        lg.info(f"[TTSController] Voice loaded successfully: {voice_config.name}")
         return True
 
     def generate_audio(
@@ -158,21 +159,21 @@ class TTSController:
         url = f"{self.host}/tts?{urlencode(params)}"
 
         try:
-            print(f"[TTSController] Generating audio for: {text[:50]}...")
+            lg.info(f"[TTSController] Generating audio for: {text[:50]}...")
             response = requests.get(url, timeout=60)
 
             if response.status_code == 200:
-                print(
+                lg.info(
                     f"[TTSController] Audio generated successfully ({len(response.content)} bytes)"
                 )
                 return response.content
             else:
-                print(
+                lg.error(
                     f"[TTSController] TTS request failed: {response.status_code} - {response.text}"
                 )
                 return None
         except requests.RequestException as e:
-            print(f"[TTSController] Error generating audio: {e}")
+            lg.error(f"[TTSController] Error generating audio: {e}")
             return None
 
     def generate_audio_stream(
@@ -209,20 +210,20 @@ class TTSController:
         url = f"{self.host}/tts"
 
         try:
-            print(f"[TTSController] Starting streaming audio for: {text[:50]}...")
+            lg.info(f"[TTSController] Starting streaming audio for: {text[:50]}...")
 
             with requests.get(url, params=params, stream=True, timeout=120) as response:
                 response.raise_for_status()
-                print("[TTSController] Stream connection established")
+                lg.debug("[TTSController] Stream connection established")
 
                 for chunk in response.iter_content(chunk_size=chunk_size):
                     if chunk:
                         yield chunk
 
-            print("[TTSController] Streaming completed")
+            lg.info("[TTSController] Streaming completed")
 
         except requests.RequestException as e:
-            print(f"[TTSController] Error in streaming audio: {e}")
+            lg.error(f"[TTSController] Error in streaming audio: {e}")
 
     def check_connection(self) -> bool:
         """

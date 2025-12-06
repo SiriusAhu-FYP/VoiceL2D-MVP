@@ -5,6 +5,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from fastmcp import Client
+from loguru import logger as lg
 from openai import OpenAI
 
 # region ==== Config ====
@@ -33,13 +34,13 @@ class UniversalBlindTester:
         try:
             with open(system_prompt_path, "r", encoding="utf-8") as f:
                 content = f.read().strip()
-                print(f"✅ Loaded system prompt from {system_prompt_path}")
+                lg.info(f"✅ Loaded system prompt from {system_prompt_path}")
                 return content
         except FileNotFoundError:
-            print(f"⚠️ Warning: system_prompt.md not found at {system_prompt_path}")
+            lg.warning(f"⚠️ Warning: system_prompt.md not found at {system_prompt_path}")
             return ""
         except Exception as e:
-            print(f"⚠️ Warning: Failed to load system prompt: {e}")
+            lg.warning(f"⚠️ Warning: Failed to load system prompt: {e}")
             return ""
 
     def _adapt_tools(self, tools):
@@ -60,15 +61,15 @@ class UniversalBlindTester:
         return openai_tools
 
     async def run(self):
-        print(f"🔌 Connecting to: {MCP_SERVER_URL}")
+        lg.info(f"🔌 Connecting to: {MCP_SERVER_URL}")
 
         # Use async context manager to keep HTTP connection
         async with self.client:
             available_tools = await self.client.list_tools()
 
-            print(f"✅ Connection successful! Detected {len(available_tools)} tools:")
+            lg.info(f"✅ Connection successful! Detected {len(available_tools)} tools:")
             for t in available_tools:
-                print(f"   - {t.name}: {t.description}")
+                lg.info(f"   - {t.name}: {t.description}")
 
             llm_tools_config = self._adapt_tools(available_tools)
 
@@ -105,8 +106,8 @@ class UniversalBlindTester:
                         t_name = tool_call.function.name
                         t_args = json.loads(tool_call.function.arguments)
 
-                        print(f"🚀 [FastMCP] Calling server tool: {t_name}")
-                        print(f"   Arguments: {t_args}")
+                        lg.info(f"🚀 [FastMCP] Calling server tool: {t_name}")
+                        lg.debug(f"   Arguments: {t_args}")
 
                         try:
                             # Call FastMCP client with tool name and arguments
@@ -127,7 +128,7 @@ class UniversalBlindTester:
                             else:
                                 output_text = str(result)
 
-                            print(f"✅ [Server returned] {output_text}")
+                            lg.info(f"✅ [Server returned] {output_text}")
 
                             messages.append({
                                 "role": "tool",
@@ -136,7 +137,7 @@ class UniversalBlindTester:
                             })
 
                         except Exception as e:
-                            print(f"❌ Call exception: {e}")
+                            lg.error(f"❌ Call exception: {e}")
                             messages.append({
                                 "role": "tool",
                                 "tool_call_id": tool_call.id,
@@ -148,9 +149,13 @@ class UniversalBlindTester:
                     final_res = self.llm.chat.completions.create(
                         model=MODEL_NAME, messages=messages, tools=llm_tools_config
                     )
+                    lg.info(f"🎉 Final answer:\n{final_res.choices[0].message.content}")
                     print(f"🎉 Final answer:\n{final_res.choices[0].message.content}")
 
                 else:
+                    lg.info(
+                        f"ℹ⚠️ AI did not call tools, directly replied:\n{ai_msg.content}"
+                    )
                     print(
                         f"ℹ⚠️ AI did not call tools, directly replied:\n{ai_msg.content}"
                     )
@@ -161,4 +166,5 @@ if __name__ == "__main__":
     try:
         asyncio.run(tester.run())
     except KeyboardInterrupt:
+        lg.info("\nTerminated by user")
         print("\nTerminated by user")

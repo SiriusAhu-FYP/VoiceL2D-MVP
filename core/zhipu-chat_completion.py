@@ -2,6 +2,7 @@ import os
 
 import requests
 from dotenv import load_dotenv
+from loguru import logger as lg
 
 load_dotenv()
 
@@ -22,4 +23,4 @@ headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
 
 response = requests.post(url, json=payload, headers=headers)
 
-print(response.json())
+lg.info(response.json())

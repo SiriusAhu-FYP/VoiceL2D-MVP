@@ -17,6 +17,7 @@ from typing import Optional
 
 from dotenv import load_dotenv
 from fastmcp import Client
+from loguru import logger as lg
 from openai import OpenAI
 from utils import AudioWebSocketServer, TTSController, VoiceManager
 
@@ -136,7 +137,7 @@ class VoiceL2DClient:
         # Voice caching - track currently loaded voice on TTS server
         self._loaded_voice_name: Optional[str] = None
 
-        print("[VoiceL2DClient] Initialized")
+        lg.info("[VoiceL2DClient] Initialized")
 
     def _load_system_prompt(self) -> str:
         """Load system prompt from system_prompt.md file."""
@@ -144,17 +145,17 @@ class VoiceL2DClient:
         try:
             with open(system_prompt_path, "r", encoding="utf-8") as f:
                 content = f.read().strip()
-                print(
+                lg.info(
                     f"[VoiceL2DClient] Loaded system prompt from {system_prompt_path}"
                 )
                 return content
         except FileNotFoundError:
-            print(
+            lg.warning(
                 f"[VoiceL2DClient] Warning: system_prompt.md not found at {system_prompt_path}"
             )
             return ""
         except Exception as e:
-            print(f"[VoiceL2DClient] Warning: Failed to load system prompt: {e}")
+            lg.warning(f"[VoiceL2DClient] Warning: Failed to load system prompt: {e}")
             return ""
 
     def _adapt_tools(self, tools) -> list[dict]:
@@ -206,7 +207,7 @@ class VoiceL2DClient:
 
             return output_text
         except Exception as e:
-            print(f"[VoiceL2DClient] MCP tool call failed: {e}")
+            lg.error(f"[VoiceL2DClient] MCP tool call failed: {e}")
             return f"Error: {str(e)}"
 
     def _ensure_voice_loaded(self) -> bool:
@@ -220,25 +221,25 @@ class VoiceL2DClient:
         """
         voice_config = self.voice_manager.get_current_voice()
         if not voice_config:
-            print("[VoiceL2DClient] No voice configured")
+            lg.warning("[VoiceL2DClient] No voice configured")
             return False
 
         current_voice_name = self.voice_manager.current_voice
 
         # Check if we need to load the voice
         if self._loaded_voice_name == current_voice_name:
-            print(
+            lg.debug(
                 f"[VoiceL2DClient] Voice '{current_voice_name}' already loaded (cached)"
             )
             return True
 
         # Load voice weights
-        print(f"[VoiceL2DClient] Loading voice: {current_voice_name}")
+        lg.info(f"[VoiceL2DClient] Loading voice: {current_voice_name}")
         if self.tts.load_voice(voice_config):
             self._loaded_voice_name = current_voice_name
             return True
         else:
-            print(f"[VoiceL2DClient] Failed to load voice: {current_voice_name}")
+            lg.error(f"[VoiceL2DClient] Failed to load voice: {current_voice_name}")
             return False
 
     async def speak(self, text: str) -> None:
@@ -262,14 +263,14 @@ class VoiceL2DClient:
         sentences = split_into_sentences(text)
 
         if not sentences:
-            print("[VoiceL2DClient] No sentences to speak")
+            lg.warning("[VoiceL2DClient] No sentences to speak")
             return
 
-        print(f"[VoiceL2DClient] Speaking {len(sentences)} sentence(s)")
+        lg.info(f"[VoiceL2DClient] Speaking {len(sentences)} sentence(s)")
 
         # Process each sentence sequentially
         for i, sentence in enumerate(sentences):
-            print(
+            lg.debug(
                 f"[VoiceL2DClient] Sentence {i + 1}/{len(sentences)}: {sentence[:30]}..."
             )
 
@@ -284,7 +285,7 @@ class VoiceL2DClient:
                 if i < len(sentences) - 1:
                     await asyncio.sleep(0.5)
             else:
-                print(f"[VoiceL2DClient] Failed to generate audio for sentence {i + 1}")
+                lg.error(f"[VoiceL2DClient] Failed to generate audio for sentence {i + 1}")
 
     def switch_voice(self, voice_name: str) -> bool:
         """
@@ -300,7 +301,7 @@ class VoiceL2DClient:
             # Note: Actual loading will happen on next speak() call
             # This just marks the voice as needing to be loaded
             if self._loaded_voice_name != voice_name:
-                print(
+                lg.info(
                     f"[VoiceL2DClient] Voice will be loaded on next speak: {voice_name}"
                 )
             return True
@@ -385,7 +386,7 @@ class VoiceL2DClient:
                 tool_name = tool_call.function.name
                 tool_args = json.loads(tool_call.function.arguments)
 
-                print(f"[VoiceL2DClient] Calling tool: {tool_name}")
+                lg.info(f"[VoiceL2DClient] Calling tool: {tool_name}")
                 result = await self._call_mcp_tool(tool_name, tool_args)
 
                 self.messages.append({
@@ -420,32 +421,32 @@ class VoiceL2DClient:
 
     async def run_interactive(self) -> None:
         """Run the client in interactive mode."""
-        print(f"\n[VoiceL2DClient] Starting interactive session...")
-        print(
+        lg.info(f"\n[VoiceL2DClient] Starting interactive session...")
+        lg.info(
             f"[VoiceL2DClient] WebSocket server: ws://{WEBSOCKET_HOST}:{WEBSOCKET_PORT}"
         )
-        print(f"[VoiceL2DClient] MCP server: {MCP_SERVER_URL}")
+        lg.info(f"[VoiceL2DClient] MCP server: {MCP_SERVER_URL}")
 
         # Start WebSocket server
         await self.ws_server.start()
 
         # Connect to MCP server
-        print(f"\n[VoiceL2DClient] Connecting to MCP server...")
+        lg.info(f"\n[VoiceL2DClient] Connecting to MCP server...")
 
         async with self.mcp_client:
             # Get available tools
             available_tools = await self.mcp_client.list_tools()
-            print(f"[VoiceL2DClient] Connected! {len(available_tools)} tools available")
+            lg.info(f"[VoiceL2DClient] Connected! {len(available_tools)} tools available")
 
             for tool in available_tools:
-                print(f"   - {tool.name}: {tool.description[:50]}...")
+                lg.info(f"   - {tool.name}: {tool.description[:50]}...")
 
             tools_config = self._adapt_tools(available_tools)
 
             # Show available voices
             voices = self.list_voices()
-            print(f"\n[VoiceL2DClient] Available voices: {voices}")
-            print(f"[VoiceL2DClient] Current voice: {self.voice_manager.current_voice}")
+            lg.info(f"\n[VoiceL2DClient] Available voices: {voices}")
+            lg.info(f"[VoiceL2DClient] Current voice: {self.voice_manager.current_voice}")
 
             print("\n" + "=" * 60)
             print("Commands:")
@@ -500,9 +501,11 @@ class VoiceL2DClient:
                         print("[Done]\n")
 
                 except KeyboardInterrupt:
+                    lg.info("\n\nInterrupted. Goodbye!")
                     print("\n\nInterrupted. Goodbye!")
                     break
                 except Exception as e:
+                    lg.error(f"Error: {e}")
                     print(f"Error: {e}")
                     import traceback
 
@@ -513,8 +516,8 @@ class VoiceL2DClient:
 
     async def run_simple(self) -> None:
         """Run the client without MCP integration (simple mode)."""
-        print(f"\n[VoiceL2DClient] Starting simple mode (no MCP)...")
-        print(
+        lg.info(f"\n[VoiceL2DClient] Starting simple mode (no MCP)...")
+        lg.info(
             f"[VoiceL2DClient] WebSocket server: ws://{WEBSOCKET_HOST}:{WEBSOCKET_PORT}"
         )
 
@@ -523,8 +526,8 @@ class VoiceL2DClient:
 
         # Show available voices
         voices = self.list_voices()
-        print(f"\n[VoiceL2DClient] Available voices: {voices}")
-        print(f"[VoiceL2DClient] Current voice: {self.voice_manager.current_voice}")
+        lg.info(f"\n[VoiceL2DClient] Available voices: {voices}")
+        lg.info(f"[VoiceL2DClient] Current voice: {self.voice_manager.current_voice}")
 
         print("\n" + "=" * 60)
         print("Commands:")
@@ -589,9 +592,11 @@ class VoiceL2DClient:
                     print("[Done]\n")
 
             except KeyboardInterrupt:
+                lg.info("\n\nInterrupted. Goodbye!")
                 print("\n\nInterrupted. Goodbye!")
                 break
             except Exception as e:
+                lg.error(f"Error: {e}")
                 print(f"Error: {e}")
                 import traceback
 
@@ -621,6 +626,7 @@ def main():
         else:
             asyncio.run(client.run_interactive())
     except KeyboardInterrupt:
+        lg.info("\nExiting...")
         print("\nExiting...")
 
 

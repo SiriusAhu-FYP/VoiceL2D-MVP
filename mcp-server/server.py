@@ -4,6 +4,7 @@ from typing import Any, Dict, Optional
 
 import requests
 from fastmcp import FastMCP
+from loguru import logger as lg
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -38,7 +39,7 @@ def _handle_response(response: requests.Response) -> Optional[Dict[str, Any]]:
         response.raise_for_status()
         return response.json()
     except requests.RequestException as exc:
-        print(f"[MCP] Request failed: {exc}")
+        lg.error(f"[MCP] Request failed: {exc}")
         return None
 
 
@@ -47,7 +48,7 @@ def _get(path: str) -> Optional[Dict[str, Any]]:
         response = requests.get(f"{frontend_url}{path}", timeout=5)
         return _handle_response(response)
     except requests.RequestException as exc:
-        print(f"[MCP] GET {path} error: {exc}")
+        lg.error(f"[MCP] GET {path} error: {exc}")
         return None
 
 
@@ -56,7 +57,7 @@ def _post(path: str, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         response = requests.post(f"{frontend_url}{path}", json=payload, timeout=5)
         return _handle_response(response)
     except requests.RequestException as exc:
-        print(f"[MCP] POST {path} error: {exc}")
+        lg.error(f"[MCP] POST {path} error: {exc}")
         return None
 
 
