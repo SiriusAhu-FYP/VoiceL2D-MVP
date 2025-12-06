@@ -82,6 +82,9 @@ class VADDetector:
         self._on_speech_start: Optional[Callable[[], None]] = None
         self._on_speech_end: Optional[Callable[[np.ndarray], None]] = None
 
+        # Pause state - when paused, VAD will not process audio
+        self._paused = False
+
     def set_callbacks(
         self,
         on_speech_start: Optional[Callable[[], None]] = None,
@@ -97,6 +100,27 @@ class VADDetector:
         self._on_speech_start = on_speech_start
         self._on_speech_end = on_speech_end
 
+    def pause(self) -> None:
+        """Pause VAD processing. No speech will be detected while paused."""
+        if not self._paused:
+            self._paused = True
+            # Clear any ongoing speech detection
+            self._is_speaking = False
+            self._silence_frames = 0
+            self._speech_buffer.clear()
+            lg.debug("[VADDetector] Paused")
+
+    def resume(self) -> None:
+        """Resume VAD processing."""
+        if self._paused:
+            self._paused = False
+            lg.debug("[VADDetector] Resumed")
+
+    @property
+    def is_paused(self) -> bool:
+        """Check if VAD is paused."""
+        return self._paused
+
     def process_frame(self, audio_frame: np.ndarray) -> bool:
         """
         Process a single audio frame.
@@ -107,6 +131,10 @@ class VADDetector:
         Returns:
             True if frame contains speech, False otherwise
         """
+        # Skip processing if paused
+        if self._paused:
+            return False
+
         # Ensure correct size
         if len(audio_frame) != self.frame_size:
             lg.warning(
@@ -305,6 +333,21 @@ class ContinuousVAD:
         with self._lock:
             self._frame_buffer = np.array([], dtype=np.int16)
             self.vad.reset()
+
+    def pause(self) -> None:
+        """Pause VAD processing."""
+        with self._lock:
+            self._frame_buffer = np.array([], dtype=np.int16)
+            self.vad.pause()
+
+    def resume(self) -> None:
+        """Resume VAD processing."""
+        self.vad.resume()
+
+    @property
+    def is_paused(self) -> bool:
+        """Check if VAD is paused."""
+        return self.vad.is_paused
 
     @property
     def is_speaking(self) -> bool:

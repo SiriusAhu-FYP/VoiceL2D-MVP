@@ -19,13 +19,15 @@ host = "localhost"
 port = 7789
 
 [vad]
-aggressiveness = 2      # 0-3, higher = more aggressive filtering; default 2
-silence_threshold = 0.8 # seconds of silence to end speech segment; default 0.8
+aggressiveness = 2        # 0-3, higher = more aggressive filtering; default 2
+silence_threshold = 0.8   # seconds of silence to end speech segment; default 0.8
+min_speech_duration = 1.0 # minimum speech duration in seconds to process; default 1.0
 
 [audio]
-sample_rate = 16000 # sample rate; default 16000
-channels = 1        # channels; default 1
-block_size = 480    # samples per block; default 480
+sample_rate = 16000     # sample rate; default 16000
+channels = 1            # channels; default 1
+block_size = 480        # samples per block; default 480
+lock_buffer_seconds = 2 # extra seconds to add to audio lock duration; default 2
 
 # ============================================
 # TTS Voice Profiles

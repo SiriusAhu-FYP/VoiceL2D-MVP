@@ -3,7 +3,8 @@ import * as PIXI from 'pixi.js';
 import { Live2DModel } from 'pixi-live2d-display/cubism4';
 import { startUpCubism4, cubism4Ready } from 'pixi-live2d-display/cubism4';
 import { ActionPanel } from './ActionPanel';
-import { ChatPanel, ChatMessage, VoiceInfo } from './ChatPanel';
+import { ChatPanel } from './ChatPanel';
+import type { ChatMessage, VoiceInfo } from './ChatPanel';
 import { updateCurrentModelState, getActions, getModelPath } from '../api/live2d-api';
 import testAudioUrl from '../assets/test_audio.wav';
 
@@ -105,6 +106,7 @@ export const Live2DComponent: React.FC = () => {
     const [statusText, setStatusText] = useState<string>('');
     const [isListening, setIsListening] = useState<boolean>(false);
     const [voices, setVoices] = useState<VoiceInfo[]>([]);
+    const [isAudioLocked, setIsAudioLocked] = useState<boolean>(false);
 
     // Lip sync refs
     const audioContextRef = useRef<AudioContext | null>(null);
@@ -421,6 +423,7 @@ export const Live2DComponent: React.FC = () => {
 
         // Notify server that playback is complete
         if (wsRef.current?.readyState === WebSocket.OPEN) {
+            console.log('[AudioWS] Sending playback_complete to server');
             wsRef.current.send(JSON.stringify({ type: 'playback_complete' }));
         }
     }, [playBase64Audio]);
@@ -515,6 +518,17 @@ export const Live2DComponent: React.FC = () => {
                                 is_current: v.name === msg.response.current_voice,
                             })));
                         }
+                    }
+                } else if (msg.type === 'audio_lock') {
+                    // Audio playback lock status
+                    console.log('[AudioWS] Audio lock:', msg.locked);
+                    setIsAudioLocked(msg.locked);
+                    if (msg.locked && msg.duration > 0) {
+                        // Auto-unlock after duration (safety fallback)
+                        setTimeout(() => {
+                            setIsAudioLocked(false);
+                            console.warn('[AudioWS] Audio lock timeout - forced unlock');
+                        }, (msg.duration + 1) * 1000);
                     }
                 } else if (msg.type === 'pong') {
                     // Heartbeat response
@@ -1067,6 +1081,7 @@ export const Live2DComponent: React.FC = () => {
                 onToggleListening={handleToggleListening}
                 voices={voices}
                 onVoiceChange={handleVoiceChange}
+                isAudioLocked={isAudioLocked}
             />
             <ActionPanel
                 currentModel={currentModel}

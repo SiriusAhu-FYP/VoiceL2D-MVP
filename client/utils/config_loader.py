@@ -14,7 +14,7 @@ from loguru import logger as lg
 class ConfigLoader:
     """
     Loader for configuration from config.toml.
-    
+
     Provides typed access to configuration values with defaults.
     """
 
@@ -32,7 +32,7 @@ class ConfigLoader:
         """Load configuration from config.toml."""
         # Look for config.toml in project root
         config_path = Path(__file__).parent.parent.parent / "config.toml"
-        
+
         if not config_path.exists():
             lg.warning(f"[Config] config.toml not found at {config_path}")
             self._config = {}
@@ -48,11 +48,11 @@ class ConfigLoader:
     def get(self, *keys: str, default: Any = None) -> Any:
         """
         Get a configuration value by nested keys.
-        
+
         Args:
             *keys: Nested keys to access (e.g., "llm", "model")
             default: Default value if key not found
-            
+
         Returns:
             Configuration value or default
         """
@@ -67,7 +67,9 @@ class ConfigLoader:
     # LLM Configuration
     @property
     def llm_base_url(self) -> str:
-        return self.get("llm", "base_url", default="https://open.bigmodel.cn/api/paas/v4/")
+        return self.get(
+            "llm", "base_url", default="https://open.bigmodel.cn/api/paas/v4/"
+        )
 
     @property
     def llm_model(self) -> str:
@@ -76,7 +78,11 @@ class ConfigLoader:
     # ASR Configuration
     @property
     def asr_api_url(self) -> str:
-        return self.get("asr", "api_url", default="https://api.siliconflow.cn/v1/audio/transcriptions")
+        return self.get(
+            "asr",
+            "api_url",
+            default="https://api.siliconflow.cn/v1/audio/transcriptions",
+        )
 
     @property
     def asr_api_model(self) -> str:
@@ -113,6 +119,10 @@ class ConfigLoader:
     def vad_silence_threshold(self) -> float:
         return self.get("vad", "silence_threshold", default=0.8)
 
+    @property
+    def vad_min_speech_duration(self) -> float:
+        return self.get("vad", "min_speech_duration", default=1.0)
+
     # Audio Configuration
     @property
     def audio_sample_rate(self) -> int:
@@ -126,6 +136,10 @@ class ConfigLoader:
     def audio_block_size(self) -> int:
         return self.get("audio", "block_size", default=480)
 
+    @property
+    def audio_lock_buffer(self) -> float:
+        return self.get("audio", "lock_buffer_seconds", default=2.0)
+
     # Voice Profiles
     def get_voices(self) -> dict[str, dict]:
         """Get all voice profiles."""
@@ -138,4 +152,3 @@ class ConfigLoader:
 
 # Global config instance
 config = ConfigLoader()
-

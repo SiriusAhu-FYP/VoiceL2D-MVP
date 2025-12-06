@@ -128,6 +128,16 @@
     animation: pulse-mic 1.5s ease-in-out infinite;
 }
 
+.voice-toggle-btn.locked {
+    background: rgba(251, 191, 36, 0.2);
+    border-color: rgba(251, 191, 36, 0.4);
+    color: #fbbf24;
+}
+
+.voice-toggle-btn.locked .voice-icon {
+    animation: pulse-lock 1s ease-in-out infinite;
+}
+
 @keyframes pulse-mic {
 
     0%,
@@ -140,9 +150,25 @@
     }
 }
 
+@keyframes pulse-lock {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.5;
+    }
+}
+
 .voice-toggle-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+}
+
+.voice-toggle-btn.locked:disabled {
+    opacity: 0.8;
 }
 
 .voice-icon {

@@ -45,6 +45,10 @@ class AudioWebSocketServer:
 
         # Callbacks for handling incoming messages
         self._on_text_input: Optional[Callable[[str], None]] = None
+        self._on_playback_complete: Optional[Callable[[], None]] = None
+
+        # Event for waiting on playback completion
+        self._playback_complete_event: Optional[asyncio.Event] = None
 
     def set_on_text_input(self, callback: Optional[Callable[[str], None]]) -> None:
         """
@@ -54,6 +58,15 @@ class AudioWebSocketServer:
             callback: Function to call with text input
         """
         self._on_text_input = callback
+
+    def set_on_playback_complete(self, callback: Optional[Callable[[], None]]) -> None:
+        """
+        Set callback for playback completion notification from frontend.
+
+        Args:
+            callback: Function to call when playback completes
+        """
+        self._on_playback_complete = callback
 
     async def _register(self, websocket: WebSocketServerProtocol) -> None:
         """Register a new client connection."""
@@ -93,7 +106,15 @@ class AudioWebSocketServer:
                         pass  # Silent - too frequent
 
                     elif msg_type == "playback_complete":
-                        pass  # Silent - too frequent
+                        lg.debug("[WS] Playback complete received")
+                        # Signal the event if waiting
+                        if self._playback_complete_event:
+                            self._playback_complete_event.set()
+                        # Call callback if set
+                        if self._on_playback_complete:
+                            result = self._on_playback_complete()
+                            if asyncio.iscoroutine(result):
+                                asyncio.create_task(result)
 
                     elif msg_type == "text_input":
                         # Handle text input from frontend
@@ -223,6 +244,27 @@ class AudioWebSocketServer:
 
         await self._broadcast(msg)
 
+    async def send_audio_lock(self, locked: bool, duration: float = 0.0) -> None:
+        """
+        Send audio lock status to frontend.
+
+        When locked, frontend should show microphone as disabled.
+
+        Args:
+            locked: True if microphone should be locked
+            duration: Expected lock duration in seconds (for timeout warning)
+        """
+        if not self.clients:
+            return
+
+        msg = json.dumps({
+            "type": "audio_lock",
+            "locked": locked,
+            "duration": duration,
+        })
+
+        await self._broadcast(msg)
+
     async def send_voices_list(self, voices: list[dict[str, Any]]) -> None:
         """
         Send list of available voices to frontend.
@@ -263,15 +305,47 @@ class AudioWebSocketServer:
         """
         Wait for playback to complete with timeout.
 
-        This is a simple delay based on estimated audio duration.
-        Frontend will send playback_complete when done.
+        This method is called after each audio send, but the actual
+        waiting for playback_complete is handled by wait_for_playback_complete().
 
         Args:
             timeout: Maximum time to wait in seconds
         """
-        # Simple delay to allow playback
-        # The frontend handles the actual sequencing
-        await asyncio.sleep(0.1)
+        # Small delay to ensure message is sent before continuing
+        await asyncio.sleep(0.05)
+
+    async def wait_for_playback_complete(self, timeout: float = 60.0) -> bool:
+        """
+        Wait for frontend to signal playback completion.
+
+        This should be called after all audio has been sent to wait
+        for the frontend to finish playing all audio.
+
+        Args:
+            timeout: Maximum time to wait in seconds
+
+        Returns:
+            True if playback completed, False if timeout
+        """
+        if not self.clients:
+            lg.warning("[WS] No clients, skipping playback wait")
+            return True
+
+        # Create event if not exists
+        self._playback_complete_event = asyncio.Event()
+
+        try:
+            lg.debug(f"[WS] Waiting for playback_complete (timeout={timeout}s)")
+            await asyncio.wait_for(
+                self._playback_complete_event.wait(), timeout=timeout
+            )
+            lg.debug("[WS] Playback complete confirmed by frontend")
+            return True
+        except asyncio.TimeoutError:
+            lg.warning(f"[WS] Playback wait timeout after {timeout}s")
+            return False
+        finally:
+            self._playback_complete_event = None
 
     async def _broadcast(self, message: str) -> None:
         """

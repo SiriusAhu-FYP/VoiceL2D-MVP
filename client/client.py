@@ -21,6 +21,7 @@ import asyncio
 import json
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any, Optional
 
@@ -57,6 +58,7 @@ WEBSOCKET_PORT = config.websocket_port
 # VAD Configuration
 VAD_AGGRESSIVENESS = config.vad_aggressiveness
 SILENCE_THRESHOLD = config.vad_silence_threshold
+MIN_SPEECH_DURATION = config.vad_min_speech_duration
 
 # Audio Configuration
 AUDIO_SAMPLE_RATE = config.audio_sample_rate
@@ -176,6 +178,10 @@ class VoiceL2DClient:
         # Recording state - starts OFF, frontend controls it
         self._is_listening = False
 
+        # Audio playback lock - prevents recording during TTS playback
+        self._audio_lock_until: float = 0.0  # Timestamp when lock expires
+        self._audio_lock_buffer: float = config.audio_lock_buffer  # Extra seconds
+
         # Asyncio primitives (created lazily)
         self._processing_lock: Optional[asyncio.Lock] = None
         self._text_input_queue: Optional[asyncio.Queue[tuple[str, str]]] = None
@@ -192,6 +198,90 @@ class VoiceL2DClient:
             self._processing_lock = asyncio.Lock()
         if self._text_input_queue is None:
             self._text_input_queue = asyncio.Queue()
+
+    def _is_audio_locked(self) -> bool:
+        """Check if audio playback lock is active."""
+        return time.time() < self._audio_lock_until
+
+    def _calculate_audio_duration(self, audio_data: bytes) -> float:
+        """
+        Calculate audio duration from WAV data.
+
+        Args:
+            audio_data: WAV audio data as bytes
+
+        Returns:
+            Duration in seconds
+        """
+        # GPT-SoVITS outputs: 32000Hz, 1 channel, 16-bit (2 bytes per sample)
+        sample_rate = 32000
+        bytes_per_sample = 2
+        channels = 1
+
+        # WAV header is 44 bytes
+        audio_bytes = len(audio_data) - 44
+        if audio_bytes <= 0:
+            return 0.0
+
+        samples = audio_bytes // (bytes_per_sample * channels)
+        return samples / sample_rate
+
+    def _lock_audio_sync(self) -> None:
+        """
+        Synchronously lock microphone (thread-safe).
+
+        Call this BEFORE starting TTS generation to prevent
+        any new audio from being captured.
+        """
+        # Set a very long lock initially (will be updated when we know duration)
+        self._audio_lock_until = time.time() + 60.0  # 60s max
+
+        # Pause VAD to stop all speech detection during TTS
+        self.vad.pause()
+
+        lg.info("[AudioLock] 🔒 Locked (TTS starting)")
+
+    async def _lock_audio(self, duration: float) -> None:
+        """
+        Lock microphone during audio playback.
+
+        Args:
+            duration: Audio duration in seconds
+        """
+        lock_duration = duration + self._audio_lock_buffer
+        self._audio_lock_until = time.time() + lock_duration
+
+        # Ensure VAD is paused (should already be from _lock_audio_sync)
+        if not self.vad.is_paused:
+            self.vad.pause()
+
+        await self.ws_server.send_audio_lock(True, lock_duration)
+        lg.debug(f"[AudioLock] Locked for {lock_duration:.1f}s")
+
+    async def _unlock_audio(self, forced: bool = False) -> None:
+        """
+        Unlock microphone after audio playback.
+
+        Args:
+            forced: If True, this was a forced unlock due to timeout
+        """
+        was_locked = self._audio_lock_until > 0
+        self._audio_lock_until = 0.0
+
+        # Resume VAD processing
+        self.vad.resume()
+
+        if was_locked:
+            await self.ws_server.send_audio_lock(False)
+            if forced:
+                lg.warning("[AudioLock] ⚠️ Forced unlock - playback may have failed")
+            else:
+                lg.info("[AudioLock] 🔓 Unlocked")
+
+    async def _check_audio_lock_timeout(self) -> None:
+        """Check and handle audio lock timeout."""
+        if self._audio_lock_until > 0 and time.time() >= self._audio_lock_until:
+            await self._unlock_audio(forced=True)
 
     def _load_system_prompt(self) -> str:
         """Load system prompt from system_prompt.md file."""
@@ -275,20 +365,52 @@ class VoiceL2DClient:
             return
 
         lg.debug(f"[TTS] Speaking {len(sentences)} sentence(s)")
+
+        # IMPORTANT: Lock microphone BEFORE generating audio
+        # This prevents any new audio from being captured during TTS
+        self._lock_audio_sync()
         await self.ws_server.send_status("speaking")
 
-        for i, sentence in enumerate(sentences):
-            lg.debug(f"[TTS] Generating: {sentence[:30]}...")
-            audio_data = self.tts.generate_audio(sentence, voice_config)
+        # Generate all audio chunks
+        total_duration = 0.0
+        audio_chunks: list[tuple[str, bytes]] = []
 
-            if audio_data:
-                await self.ws_server.send_audio(audio_data, sentence)
-                if i < len(sentences) - 1:
-                    await asyncio.sleep(0.5)
-            else:
-                lg.error(f"[VoiceL2DClient] TTS failed for sentence {i + 1}")
+        try:
+            for sentence in sentences:
+                lg.debug(f"[TTS] Generating: {sentence[:30]}...")
+                audio_data = self.tts.generate_audio(sentence, voice_config)
 
-        await self.ws_server.send_status("idle")
+                if audio_data:
+                    audio_chunks.append((sentence, audio_data))
+                    total_duration += self._calculate_audio_duration(audio_data)
+                else:
+                    lg.error(f"[TTS] Failed: {sentence[:30]}...")
+
+            # Update lock with actual duration (add buffer for safety)
+            if audio_chunks:
+                # Set lock duration with extra buffer for network/playback delays
+                lock_timeout = total_duration + self._audio_lock_buffer + 5.0
+                await self._lock_audio(lock_timeout)
+
+                # Send all audio chunks to frontend
+                for i, (sentence, audio_data) in enumerate(audio_chunks):
+                    await self.ws_server.send_audio(audio_data, sentence)
+                    if i < len(audio_chunks) - 1:
+                        await asyncio.sleep(0.1)  # Small delay between sends
+
+                # Wait for frontend to confirm playback is complete
+                lg.debug("[TTS] Waiting for frontend playback to complete...")
+                playback_completed = await self.ws_server.wait_for_playback_complete(
+                    timeout=lock_timeout
+                )
+
+                if not playback_completed:
+                    lg.warning("[TTS] Playback wait timed out")
+
+        finally:
+            # Always unlock when done (even if error occurred)
+            await self._unlock_audio()
+            await self.ws_server.send_status("idle")
 
     def get_voices_info(self) -> list[dict[str, Any]]:
         """Get list of available voices with their info."""
@@ -439,6 +561,11 @@ class VoiceL2DClient:
             lg.warning("[VoiceL2DClient] Event loop not set, cannot process speech")
             return
 
+        # Check audio lock (thread-safe check)
+        if self._is_audio_locked():
+            lg.info("[VAD] 🔇 Ignoring speech segment - audio locked")
+            return
+
         # Schedule the coroutine on the main event loop from this thread
         self._event_loop.call_soon_threadsafe(
             lambda: asyncio.create_task(self._process_speech_segment(audio_data))
@@ -446,13 +573,29 @@ class VoiceL2DClient:
 
     async def _process_speech_segment(self, audio_data: np.ndarray) -> None:
         """Process a detected speech segment."""
-        if not self._is_listening:
+        # Double-check lock and listening state
+        if not self._is_listening or self._is_audio_locked():
+            lg.debug("[VAD] Ignoring segment - locked or not listening")
             return
 
-        lg.debug(f"[VAD] Speech detected ({len(audio_data)} samples)")
+        # Calculate audio duration
+        audio_duration = len(audio_data) / AUDIO_SAMPLE_RATE
+
+        # Minimum duration check
+        if audio_duration < MIN_SPEECH_DURATION:
+            lg.debug(
+                f"[VAD] Audio too short ({audio_duration:.2f}s < {MIN_SPEECH_DURATION}s), ignoring"
+            )
+            if self._is_listening:
+                await self.ws_server.send_status("listening")
+            return
+
+        lg.debug(
+            f"[VAD] Speech detected ({audio_duration:.2f}s, {len(audio_data)} samples)"
+        )
 
         await self.ws_server.send_status("processing", "Transcribing...")
-        text = self.asr.transcribe(audio_data, sample_rate=16000)
+        text = self.asr.transcribe(audio_data, sample_rate=AUDIO_SAMPLE_RATE)
 
         if text and text.strip():
             lg.info(f"[ASR] {text}")
@@ -460,7 +603,7 @@ class VoiceL2DClient:
             assert self._text_input_queue is not None
             await self._text_input_queue.put(("voice", text))
         else:
-            lg.warning("[VoiceL2DClient] ASR returned empty result")
+            lg.debug("[ASR] Empty result")
             if self._is_listening:
                 await self.ws_server.send_status("listening")
 
@@ -500,6 +643,14 @@ class VoiceL2DClient:
         lg.debug(f"[VoiceL2DClient] Frontend command: {command}")
 
         if command == "toggle_listening":
+            # Prevent toggling during audio lock
+            if self._is_audio_locked():
+                return {
+                    "success": False,
+                    "error": "Audio playback in progress",
+                    "listening": self._is_listening,
+                    "locked": True,
+                }
             enabled = data.get("enabled", not self._is_listening)
             if enabled and not self._is_listening:
                 await self.start_listening()
@@ -525,6 +676,7 @@ class VoiceL2DClient:
             return {
                 "success": True,
                 "listening": self._is_listening,
+                "audio_locked": self._is_audio_locked(),
                 "current_voice": self.voice_manager.current_voice,
                 "loaded_voice": self._loaded_voice_name,
             }

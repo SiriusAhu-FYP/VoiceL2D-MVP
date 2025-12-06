@@ -40,6 +40,8 @@ export interface ChatPanelProps {
     voices?: VoiceInfo[];
     /** Callback when voice is changed */
     onVoiceChange?: (voiceName: string) => void;
+    /** Whether audio playback is locking the microphone */
+    isAudioLocked?: boolean;
 }
 
 export const ChatPanel: React.FC<ChatPanelProps> = ({
@@ -51,6 +53,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     onToggleListening,
     voices = [],
     onVoiceChange,
+    isAudioLocked = false,
 }) => {
     // Use external messages if provided, otherwise use internal state
     const [internalMessages, setInternalMessages] = useState<ChatMessage[]>([]);
@@ -167,14 +170,16 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                     <div className="chat-control-bar">
                         {/* Voice Input Toggle */}
                         <button
-                            className={`voice-toggle-btn ${isListening ? 'active' : ''}`}
+                            className={`voice-toggle-btn ${isListening ? 'active' : ''} ${isAudioLocked ? 'locked' : ''}`}
                             onClick={handleVoiceToggle}
-                            disabled={isProcessing}
-                            title={isListening ? '关闭语音输入' : '开启语音输入'}
+                            disabled={isProcessing || isAudioLocked}
+                            title={isAudioLocked ? '语音播放中...' : (isListening ? '关闭语音输入' : '开启语音输入')}
                         >
-                            <span className="voice-icon">{isListening ? '🎤' : '🎙️'}</span>
+                            <span className="voice-icon">
+                                {isAudioLocked ? '🔇' : (isListening ? '🎤' : '🎙️')}
+                            </span>
                             <span className="voice-label">
-                                {isListening ? '语音已开启' : '语音已关闭'}
+                                {isAudioLocked ? '播放中' : (isListening ? '语音已开启' : '语音已关闭')}
                             </span>
                         </button>
 
