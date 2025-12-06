@@ -30,23 +30,16 @@ const AUDIO_WS_URL = 'ws://localhost:7789';
 const live2dWindow = window as Live2DWindow;
 live2dWindow.PIXI = PIXI;
 
-// Lip sync configuration - optimized for larger mouth movements
+// Lip sync configuration - volume-based mouth control
 const LIP_SYNC_CONFIG = {
-    // Smoothing factors (lower = faster response)
-    openSmoothing: 0.5,
-
-    // Volume thresholds - lowered for more sensitivity
-    minVolume: 0.005,
-    maxVolume: 0.15,
-
-    // Amplification for larger movements
-    amplification: 2.5,
-
-    // Live2D parameter IDs for mouth
-    mouthOpenParam: 'ParamMouthOpenY',
-
-    // Update rate
-    updateRate: 60,
+    // Smoothing factor for mouth movement (0-1, lower = faster)
+    smoothing: 0.3,
+    // Volume threshold below which mouth stays closed
+    volumeThreshold: 0.01,
+    // Volume amplification factor
+    amplification: 3.0,
+    // Live2D parameter ID for mouth opening
+    mouthParam: 'ParamMouthOpenY',
 };
 
 const waitForLive2DCore = (): Promise<void> => {
@@ -150,27 +143,44 @@ export const Live2DComponent: React.FC = () => {
             audioContextRef.current = new AudioContext();
             analyserRef.current = audioContextRef.current.createAnalyser();
             analyserRef.current.fftSize = 256;
-            analyserRef.current.smoothingTimeConstant = 0.5;
-            console.log('[LipSync] Audio context initialized');
+            analyserRef.current.smoothingTimeConstant = 0.3;
         }
         return audioContextRef.current;
     }, []);
 
-    // Get current volume from audio analyser
+    // Get current volume from audio analyser (0-1 range)
     const getCurrentVolume = useCallback((): number => {
         if (!analyserRef.current) return 0;
 
         const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
         analyserRef.current.getByteFrequencyData(dataArray);
 
-        // Calculate RMS volume from frequency data
+        // Calculate average volume
         let sum = 0;
         for (let i = 0; i < dataArray.length; i++) {
-            sum += dataArray[i] * dataArray[i];
+            sum += dataArray[i];
         }
-        const rms = Math.sqrt(sum / dataArray.length) / 255;
+        return sum / (dataArray.length * 255);
+    }, []);
 
-        return rms;
+    // Set mouth opening value on the Live2D model
+    const setMouthValue = useCallback((value: number) => {
+        if (!modelRef.current) return;
+
+        try {
+            const internalModel = modelRef.current.internalModel;
+            const coreModel = (internalModel as {
+                coreModel?: {
+                    setParameterValueById: (id: string, value: number, weight?: number) => void;
+                }
+            })?.coreModel;
+
+            if (coreModel) {
+                coreModel.setParameterValueById(LIP_SYNC_CONFIG.mouthParam, value, 1.0);
+            }
+        } catch {
+            // Silently ignore errors
+        }
     }, []);
 
     // Setup lip sync handler that hooks into model's update cycle
@@ -182,70 +192,35 @@ export const Live2DComponent: React.FC = () => {
             modelRef.current.internalModel.off('beforeModelUpdate', lipSyncHandlerRef.current);
         }
 
-        // Create new handler that updates mouth parameter during model update
+        // Create handler: volume -> mouth opening
         const handler = () => {
             if (!lipSyncActiveRef.current || !modelRef.current) return;
 
-            // Get current audio volume
+            // Get volume and apply threshold
             const volume = getCurrentVolume();
-
-            // Normalize and amplify volume
-            let normalizedVolume = Math.min(
-                Math.max((volume - LIP_SYNC_CONFIG.minVolume) / (LIP_SYNC_CONFIG.maxVolume - LIP_SYNC_CONFIG.minVolume), 0),
-                1
-            );
-
-            // Apply amplification
-            normalizedVolume = Math.min(normalizedVolume * LIP_SYNC_CONFIG.amplification, 1);
-
-            // Set target value
-            targetMouthValueRef.current = normalizedVolume;
+            const targetValue = volume < LIP_SYNC_CONFIG.volumeThreshold
+                ? 0
+                : Math.min(volume * LIP_SYNC_CONFIG.amplification, 1);
 
             // Smooth transition
-            currentMouthValueRef.current += (targetMouthValueRef.current - currentMouthValueRef.current) * LIP_SYNC_CONFIG.openSmoothing;
+            targetMouthValueRef.current = targetValue;
+            currentMouthValueRef.current += (targetMouthValueRef.current - currentMouthValueRef.current) * LIP_SYNC_CONFIG.smoothing;
 
-            // Apply to model using the correct API
-            try {
-                const internalModel = modelRef.current.internalModel;
-                const coreModel = (internalModel as {
-                    coreModel?: {
-                        setParameterValueById: (id: string, value: number, weight?: number) => void;
-                        getParameterIndex: (id: string) => number;
-                        setParameterValueByIndex: (index: number, value: number, weight?: number) => void;
-                    }
-                })?.coreModel;
-
-                if (coreModel) {
-                    // Try to set parameter by ID first
-                    const paramIndex = coreModel.getParameterIndex(LIP_SYNC_CONFIG.mouthOpenParam);
-                    if (paramIndex >= 0) {
-                        coreModel.setParameterValueByIndex(paramIndex, currentMouthValueRef.current, 1.0);
-                    } else {
-                        // Fallback to setParameterValueById
-                        coreModel.setParameterValueById(LIP_SYNC_CONFIG.mouthOpenParam, currentMouthValueRef.current, 1.0);
-                    }
-                }
-            } catch (err) {
-                // Log error once
-                if (currentMouthValueRef.current > 0.1) {
-                    console.warn('[LipSync] Failed to set mouth parameter:', err);
-                }
-            }
+            // Apply to model
+            setMouthValue(currentMouthValueRef.current);
         };
 
         lipSyncHandlerRef.current = handler;
         modelRef.current.internalModel.on('beforeModelUpdate', handler);
-        console.log('[LipSync] Handler attached to model');
-    }, [getCurrentVolume]);
+    }, [getCurrentVolume, setMouthValue]);
 
     // Start lip sync
     const startLipSync = useCallback(() => {
         lipSyncActiveRef.current = true;
         setupLipSyncHandler();
-        console.log('[LipSync] Started');
     }, [setupLipSyncHandler]);
 
-    // Stop lip sync
+    // Stop lip sync and smoothly close mouth
     const stopLipSync = useCallback(() => {
         lipSyncActiveRef.current = false;
 
@@ -255,96 +230,64 @@ export const Live2DComponent: React.FC = () => {
             if (currentMouthValueRef.current < 0.01) {
                 currentMouthValueRef.current = 0;
                 targetMouthValueRef.current = 0;
+                setMouthValue(0);
                 clearInterval(closeInterval);
+            } else {
+                setMouthValue(currentMouthValueRef.current);
             }
         }, 16);
+    }, [setMouthValue]);
 
-        console.log('[LipSync] Stopped');
-    }, []);
-
-    // Connect audio element to analyser for lip sync
-    const connectAudioToAnalyser = useCallback((audioElement: HTMLAudioElement) => {
-        const ctx = initAudioContext();
-
-        // Resume context if suspended (browser autoplay policy)
-        if (ctx.state === 'suspended') {
-            ctx.resume();
-        }
-
-        // Each new audio element needs its own MediaElementSource
-        // Disconnect previous source if exists
-        if (sourceNodeRef.current) {
-            try {
-                sourceNodeRef.current.disconnect();
-            } catch {
-                // Ignore disconnect errors
-            }
-            sourceNodeRef.current = null;
-        }
-
-        // Create new source node for this audio element
-        try {
-            sourceNodeRef.current = ctx.createMediaElementSource(audioElement);
-            sourceNodeRef.current.connect(analyserRef.current!);
-            analyserRef.current!.connect(ctx.destination);
-        } catch (err) {
-            // If this audio element was already connected, just log and continue
-            console.warn('[LipSync] Could not create media element source:', err);
-        }
-    }, [initAudioContext]);
-
-    // Play audio with lip sync
+    // Play audio from URL with lip sync (for test button)
     const playAudioWithLipSync = useCallback(async (audioUrl: string): Promise<void> => {
         return new Promise((resolve, reject) => {
-            // Stop any existing audio
             if (audioRef.current) {
                 audioRef.current.pause();
                 audioRef.current.currentTime = 0;
             }
 
-            setIsPlaying(true);
+            const ctx = initAudioContext();
+            if (ctx.state === 'suspended') ctx.resume();
 
+            setIsPlaying(true);
             const audio = new Audio(audioUrl);
             audioRef.current = audio;
 
-            // Connect to analyser before playing
-            connectAudioToAnalyser(audio);
+            // Connect to analyser
+            if (sourceNodeRef.current) {
+                try { sourceNodeRef.current.disconnect(); } catch { /* ignore */ }
+                sourceNodeRef.current = null;
+            }
+            try {
+                sourceNodeRef.current = ctx.createMediaElementSource(audio);
+                sourceNodeRef.current.connect(analyserRef.current!);
+                analyserRef.current!.connect(ctx.destination);
+            } catch { /* ignore */ }
 
-            audio.onplay = () => {
-                startLipSync();
-            };
-
+            audio.onplay = () => startLipSync();
             audio.onended = () => {
                 stopLipSync();
                 setIsPlaying(false);
                 resolve();
             };
-
             audio.onerror = (err) => {
                 stopLipSync();
                 setIsPlaying(false);
                 reject(err);
             };
-
             audio.play().catch((err) => {
                 stopLipSync();
                 setIsPlaying(false);
                 reject(err);
             });
         });
-    }, [connectAudioToAnalyser, startLipSync, stopLipSync]);
+    }, [initAudioContext, startLipSync, stopLipSync]);
 
-    // Handle test lip sync with default audio
+    // Handle test lip sync button
     const handleTestLipSync = useCallback(async () => {
-        if (isPlaying) {
-            console.log('[LipSync] Already playing, ignoring request');
-            return;
-        }
-
-        console.log('[LipSync] Testing with default audio');
+        if (isPlaying) return;
         try {
             await playAudioWithLipSync(testAudioUrl);
-            console.log('[LipSync] Test completed');
         } catch (err) {
             console.error('[LipSync] Test failed:', err);
         }
@@ -356,42 +299,39 @@ export const Live2DComponent: React.FC = () => {
 
     // Play audio from base64 data with lip sync
     const playBase64Audio = useCallback(async (audioData: string, text: string): Promise<void> => {
-        return new Promise(async (resolve, reject) => {
+        const ctx = initAudioContext();
+        if (ctx.state === 'suspended') await ctx.resume();
+
+        // Decode base64 to ArrayBuffer
+        const binaryString = atob(audioData);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+        }
+
+        // Decode and play audio
+        const audioBuffer = await ctx.decodeAudioData(bytes.buffer);
+        const source = ctx.createBufferSource();
+        source.buffer = audioBuffer;
+
+        // Connect to analyser for lip sync
+        source.connect(analyserRef.current!);
+        analyserRef.current!.connect(ctx.destination);
+
+        return new Promise((resolve, reject) => {
+            setIsPlaying(true);
+            startLipSync();
+
+            source.onended = () => {
+                stopLipSync();
+                setIsPlaying(false);
+                resolve();
+            };
+
             try {
-                const ctx = initAudioContext();
-                if (ctx.state === 'suspended') {
-                    await ctx.resume();
-                }
-
-                // Decode base64 to ArrayBuffer
-                const binaryString = atob(audioData);
-                const bytes = new Uint8Array(binaryString.length);
-                for (let i = 0; i < binaryString.length; i++) {
-                    bytes[i] = binaryString.charCodeAt(i);
-                }
-
-                // Decode audio data
-                const audioBuffer = await ctx.decodeAudioData(bytes.buffer);
-                const source = ctx.createBufferSource();
-                source.buffer = audioBuffer;
-
-                // Connect to analyser for lip sync
-                source.connect(analyserRef.current!);
-                analyserRef.current!.connect(ctx.destination);
-
-                setIsPlaying(true);
-                startLipSync();
-
-                source.onended = () => {
-                    stopLipSync();
-                    setIsPlaying(false);
-                    resolve();
-                };
-
                 source.start();
-                console.log('[AudioWS] Playing audio for:', text.substring(0, 30));
+                console.log('[Audio] Playing:', text.substring(0, 30));
             } catch (err) {
-                console.error('[AudioWS] Failed to play audio:', err);
                 stopLipSync();
                 setIsPlaying(false);
                 reject(err);
@@ -401,8 +341,7 @@ export const Live2DComponent: React.FC = () => {
 
     // Process playback queue sequentially
     const processPlaybackQueue = useCallback(async () => {
-        if (isPlayingQueueRef.current) return;
-        if (playbackQueueRef.current.length === 0) return;
+        if (isPlayingQueueRef.current || playbackQueueRef.current.length === 0) return;
 
         isPlayingQueueRef.current = true;
 
@@ -411,10 +350,9 @@ export const Live2DComponent: React.FC = () => {
             if (item) {
                 try {
                     await playBase64Audio(item.audioData, item.text);
-                    // 0.5 second delay between segments as requested
-                    await new Promise(resolve => setTimeout(resolve, 500));
+                    await new Promise(resolve => setTimeout(resolve, 300)); // Gap between segments
                 } catch (err) {
-                    console.error('[AudioWS] Error in playback queue:', err);
+                    console.error('[Audio] Playback error:', err);
                 }
             }
         }
@@ -423,22 +361,33 @@ export const Live2DComponent: React.FC = () => {
 
         // Notify server that playback is complete
         if (wsRef.current?.readyState === WebSocket.OPEN) {
-            console.log('[AudioWS] Sending playback_complete to server');
             wsRef.current.send(JSON.stringify({ type: 'playback_complete' }));
         }
     }, [playBase64Audio]);
 
+    // Generate unique message ID
+    const genMsgId = () => `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+    // Add chat message helper
+    const addChatMessage = useCallback((type: 'user' | 'ai', text: string, source?: 'text' | 'voice') => {
+        const msg: ChatMessage = {
+            id: genMsgId(),
+            type,
+            text,
+            source,
+            timestamp: new Date(),
+        };
+        setChatMessages(prev => [...prev, msg]);
+    }, []);
+
     // Setup WebSocket connection for audio
     const setupAudioWebSocket = useCallback(() => {
-        if (wsRef.current?.readyState === WebSocket.OPEN) {
-            return;
-        }
+        if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
-        console.log('[AudioWS] Connecting to', AUDIO_WS_URL);
         const ws = new WebSocket(AUDIO_WS_URL);
 
         ws.onopen = () => {
-            console.log('[AudioWS] Connected');
+            console.log('[WS] Connected');
             ws.send(JSON.stringify({ type: 'ready' }));
         };
 
@@ -446,173 +395,106 @@ export const Live2DComponent: React.FC = () => {
             try {
                 const msg = JSON.parse(event.data);
 
-                if (msg.type === 'connected') {
-                    console.log('[AudioWS] Received welcome message');
-                } else if (msg.type === 'audio') {
-                    // Received audio data - add to queue
-                    console.log('[AudioWS] Received audio for:', msg.text?.substring(0, 30));
-                    playbackQueueRef.current.push({
-                        audioData: msg.audio_data,
-                        text: msg.text || '',
-                    });
-                    // Start processing queue if not already
-                    processPlaybackQueue();
-                } else if (msg.type === 'user_message') {
-                    // Received user message from voice input (text input is added optimistically)
-                    // Only add if source is 'voice' to avoid duplicates
-                    if (msg.source === 'voice') {
-                        console.log('[AudioWS] User message (voice):', msg.text?.substring(0, 30));
-                        const newMessage: ChatMessage = {
-                            id: `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-                            type: 'user',
-                            text: msg.text || '',
-                            source: 'voice',
-                            timestamp: new Date(),
+                switch (msg.type) {
+                    case 'audio':
+                        playbackQueueRef.current.push({ audioData: msg.audio_data, text: msg.text || '' });
+                        processPlaybackQueue();
+                        break;
+
+                    case 'user_message':
+                        if (msg.source === 'voice') {
+                            addChatMessage('user', msg.text || '', 'voice');
+                        }
+                        break;
+
+                    case 'ai_message':
+                        addChatMessage('ai', msg.text || '');
+                        setIsProcessing(false);
+                        break;
+
+                    case 'status': {
+                        const statusMap: Record<string, string> = {
+                            listening: '正在聆听...',
+                            processing: '处理中...',
+                            speaking: '正在回复...',
+                            idle: '',
                         };
-                        setChatMessages(prev => [...prev, newMessage]);
+                        setStatusText(statusMap[msg.status] || msg.message || '');
+                        setIsProcessing(msg.status === 'processing');
+                        if (msg.status === 'listening') setIsListening(true);
+                        break;
                     }
-                } else if (msg.type === 'ai_message') {
-                    // Received AI response
-                    console.log('[AudioWS] AI message:', msg.text?.substring(0, 30));
-                    const newMessage: ChatMessage = {
-                        id: `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-                        type: 'ai',
-                        text: msg.text || '',
-                        timestamp: new Date(),
-                    };
-                    setChatMessages(prev => [...prev, newMessage]);
-                    setIsProcessing(false);
-                } else if (msg.type === 'status') {
-                    // Status update
-                    console.log('[AudioWS] Status:', msg.status);
-                    const statusMap: Record<string, string> = {
-                        'listening': '正在聆听...',
-                        'processing': '处理中...',
-                        'speaking': '正在回复...',
-                        'idle': '',
-                    };
-                    setStatusText(statusMap[msg.status] || msg.message || '');
-                    setIsProcessing(msg.status === 'processing');
-                    // Update listening state based on status
-                    if (msg.status === 'listening') {
-                        setIsListening(true);
-                    } else if (msg.status === 'idle') {
-                        // Keep listening state, only idle status doesn't change it
-                    }
-                } else if (msg.type === 'voices_list') {
-                    // Received list of available voices
-                    console.log('[AudioWS] Voices list:', msg.voices);
-                    setVoices(msg.voices || []);
-                } else if (msg.type === 'command_response') {
-                    // Response to a command
-                    console.log('[AudioWS] Command response:', msg.command, msg.response);
-                    if (msg.command === 'toggle_listening') {
-                        setIsListening(msg.response?.listening || false);
-                    } else if (msg.command === 'get_voices') {
-                        setVoices(msg.response?.voices || []);
-                    } else if (msg.command === 'switch_voice') {
-                        // Update voices list to reflect current voice
-                        if (msg.response?.success && msg.response?.current_voice) {
+
+                    case 'voices_list':
+                        setVoices(msg.voices || []);
+                        break;
+
+                    case 'command_response':
+                        if (msg.command === 'toggle_listening') {
+                            setIsListening(msg.response?.listening || false);
+                        } else if (msg.command === 'get_voices') {
+                            setVoices(msg.response?.voices || []);
+                        } else if (msg.command === 'switch_voice' && msg.response?.success) {
                             setVoices(prev => prev.map(v => ({
                                 ...v,
                                 is_current: v.name === msg.response.current_voice,
                             })));
                         }
-                    }
-                } else if (msg.type === 'audio_lock') {
-                    // Audio playback lock status
-                    console.log('[AudioWS] Audio lock:', msg.locked);
-                    setIsAudioLocked(msg.locked);
-                    if (msg.locked && msg.duration > 0) {
-                        // Auto-unlock after duration (safety fallback)
-                        setTimeout(() => {
-                            setIsAudioLocked(false);
-                            console.warn('[AudioWS] Audio lock timeout - forced unlock');
-                        }, (msg.duration + 1) * 1000);
-                    }
-                } else if (msg.type === 'pong') {
-                    // Heartbeat response
+                        break;
+
+                    case 'audio_lock':
+                        setIsAudioLocked(msg.locked);
+                        if (msg.locked && msg.duration > 0) {
+                            setTimeout(() => setIsAudioLocked(false), (msg.duration + 1) * 1000);
+                        }
+                        break;
                 }
             } catch (err) {
-                console.error('[AudioWS] Failed to parse message:', err);
+                console.error('[WS] Parse error:', err);
             }
         };
 
-        ws.onerror = (err) => {
-            console.error('[AudioWS] Error:', err);
-        };
-
+        ws.onerror = (err) => console.error('[WS] Error:', err);
         ws.onclose = () => {
-            console.log('[AudioWS] Disconnected');
             wsRef.current = null;
-            // Attempt reconnect after delay
-            setTimeout(() => {
-                if (!wsRef.current) {
-                    setupAudioWebSocket();
-                }
-            }, 5000);
+            setTimeout(() => { if (!wsRef.current) setupAudioWebSocket(); }, 5000);
         };
 
         wsRef.current = ws;
-    }, [processPlaybackQueue]);
+    }, [processPlaybackQueue, addChatMessage]);
 
-    // Send text input to backend via WebSocket
+    // Send WebSocket message helper
+    const sendWsMessage = useCallback((data: object) => {
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+            wsRef.current.send(JSON.stringify(data));
+            return true;
+        }
+        return false;
+    }, []);
+
+    // Send text input to backend
     const handleSendMessage = useCallback((text: string) => {
         if (!text.trim()) return;
 
-        // Add user message to chat immediately (optimistic update)
-        const newMessage: ChatMessage = {
-            id: `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-            type: 'user',
-            text: text,
-            source: 'text',
-            timestamp: new Date(),
-        };
-        setChatMessages(prev => [...prev, newMessage]);
+        addChatMessage('user', text, 'text');
         setIsProcessing(true);
         setStatusText('处理中...');
 
-        // Send to backend
-        if (wsRef.current?.readyState === WebSocket.OPEN) {
-            wsRef.current.send(JSON.stringify({
-                type: 'text_input',
-                text: text,
-            }));
-            console.log('[AudioWS] Sent text input:', text.substring(0, 30));
-        } else {
-            console.error('[AudioWS] WebSocket not connected');
+        if (!sendWsMessage({ type: 'text_input', text })) {
             setIsProcessing(false);
             setStatusText('连接断开');
         }
-    }, []);
+    }, [addChatMessage, sendWsMessage]);
 
     // Toggle voice listening
     const handleToggleListening = useCallback((enabled: boolean) => {
-        if (wsRef.current?.readyState === WebSocket.OPEN) {
-            wsRef.current.send(JSON.stringify({
-                type: 'command',
-                command: 'toggle_listening',
-                enabled: enabled,
-            }));
-            console.log('[AudioWS] Toggle listening:', enabled);
-        } else {
-            console.error('[AudioWS] WebSocket not connected');
-        }
-    }, []);
+        sendWsMessage({ type: 'command', command: 'toggle_listening', enabled });
+    }, [sendWsMessage]);
 
     // Change TTS voice
     const handleVoiceChange = useCallback((voiceName: string) => {
-        if (wsRef.current?.readyState === WebSocket.OPEN) {
-            wsRef.current.send(JSON.stringify({
-                type: 'command',
-                command: 'switch_voice',
-                voice_name: voiceName,
-            }));
-            console.log('[AudioWS] Switch voice:', voiceName);
-        } else {
-            console.error('[AudioWS] WebSocket not connected');
-        }
-    }, []);
+        sendWsMessage({ type: 'command', command: 'switch_voice', voice_name: voiceName });
+    }, [sendWsMessage]);
 
     const handlePlayAction = useCallback((action: string, sound?: string) => {
         if (!modelRef.current) {
