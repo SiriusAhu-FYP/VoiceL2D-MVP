@@ -102,7 +102,9 @@ class TTSController:
                 )
                 return True
             else:
-                lg.error(f"[TTSController] Failed to set SoVITS weights: {response.text}")
+                lg.error(
+                    f"[TTSController] Failed to set SoVITS weights: {response.text}"
+                )
                 return False
         except requests.RequestException as e:
             lg.error(f"[TTSController] Error setting SoVITS weights: {e}")

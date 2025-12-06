@@ -3,6 +3,7 @@ import * as PIXI from 'pixi.js';
 import { Live2DModel } from 'pixi-live2d-display/cubism4';
 import { startUpCubism4, cubism4Ready } from 'pixi-live2d-display/cubism4';
 import { ActionPanel } from './ActionPanel';
+import { ChatPanel, ChatMessage } from './ChatPanel';
 import { updateCurrentModelState, getActions, getModelPath } from '../api/live2d-api';
 import testAudioUrl from '../assets/test_audio.wav';
 
@@ -97,6 +98,11 @@ export const Live2DComponent: React.FC = () => {
     const [currentModel, setCurrentModel] = useState<string>('');
     const [isPlaying, setIsPlaying] = useState<boolean>(false);
     const audioRef = useRef<HTMLAudioElement | null>(null);
+
+    // Chat state
+    const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+    const [isProcessing, setIsProcessing] = useState<boolean>(false);
+    const [statusText, setStatusText] = useState<string>('');
 
     // Lip sync refs
     const audioContextRef = useRef<AudioContext | null>(null);
@@ -437,6 +443,42 @@ export const Live2DComponent: React.FC = () => {
                     });
                     // Start processing queue if not already
                     processPlaybackQueue();
+                } else if (msg.type === 'user_message') {
+                    // Received user message from voice input (text input is added optimistically)
+                    // Only add if source is 'voice' to avoid duplicates
+                    if (msg.source === 'voice') {
+                        console.log('[AudioWS] User message (voice):', msg.text?.substring(0, 30));
+                        const newMessage: ChatMessage = {
+                            id: `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                            type: 'user',
+                            text: msg.text || '',
+                            source: 'voice',
+                            timestamp: new Date(),
+                        };
+                        setChatMessages(prev => [...prev, newMessage]);
+                    }
+                } else if (msg.type === 'ai_message') {
+                    // Received AI response
+                    console.log('[AudioWS] AI message:', msg.text?.substring(0, 30));
+                    const newMessage: ChatMessage = {
+                        id: `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                        type: 'ai',
+                        text: msg.text || '',
+                        timestamp: new Date(),
+                    };
+                    setChatMessages(prev => [...prev, newMessage]);
+                    setIsProcessing(false);
+                } else if (msg.type === 'status') {
+                    // Status update
+                    console.log('[AudioWS] Status:', msg.status);
+                    const statusMap: Record<string, string> = {
+                        'listening': '正在聆听...',
+                        'processing': '处理中...',
+                        'speaking': '正在回复...',
+                        'idle': '',
+                    };
+                    setStatusText(statusMap[msg.status] || msg.message || '');
+                    setIsProcessing(msg.status === 'processing');
                 } else if (msg.type === 'pong') {
                     // Heartbeat response
                 }
@@ -462,6 +504,36 @@ export const Live2DComponent: React.FC = () => {
 
         wsRef.current = ws;
     }, [processPlaybackQueue]);
+
+    // Send text input to backend via WebSocket
+    const handleSendMessage = useCallback((text: string) => {
+        if (!text.trim()) return;
+
+        // Add user message to chat immediately (optimistic update)
+        const newMessage: ChatMessage = {
+            id: `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            type: 'user',
+            text: text,
+            source: 'text',
+            timestamp: new Date(),
+        };
+        setChatMessages(prev => [...prev, newMessage]);
+        setIsProcessing(true);
+        setStatusText('处理中...');
+
+        // Send to backend
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+            wsRef.current.send(JSON.stringify({
+                type: 'text_input',
+                text: text,
+            }));
+            console.log('[AudioWS] Sent text input:', text.substring(0, 30));
+        } else {
+            console.error('[AudioWS] WebSocket not connected');
+            setIsProcessing(false);
+            setStatusText('连接断开');
+        }
+    }, []);
 
     const handlePlayAction = useCallback((action: string, sound?: string) => {
         if (!modelRef.current) {
@@ -929,6 +1001,12 @@ export const Live2DComponent: React.FC = () => {
             <canvas
                 ref={canvasRef}
                 style={{ width: '100vw', height: '100vh' }}
+            />
+            <ChatPanel
+                messages={chatMessages}
+                onSendMessage={handleSendMessage}
+                isProcessing={isProcessing}
+                statusText={statusText}
             />
             <ActionPanel
                 currentModel={currentModel}

@@ -4,7 +4,12 @@ import type { ServerResponse } from 'http'
 import { live2dStateManager } from './server/live2dState'
 import type { ResourcesData } from './src/api/live2d-api'
 import { readFileSync, existsSync } from 'fs'
-import { join } from 'path'
+import { join, dirname } from 'path'
+import { fileURLToPath } from 'url'
+
+// ES module equivalent of __dirname
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
 
 const sendJson = (res: ServerResponse, payload: unknown, status = 200) => {
   res.statusCode = status

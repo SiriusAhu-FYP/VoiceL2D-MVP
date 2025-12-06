@@ -21,10 +21,22 @@ If first time using, make sure to install dependencies first:
     uv run mcp-server/server.py
     ```
 
-3. Launch the MCP client in the third terminal, which is the terminal to interact with:
+3. Launch the client in the third terminal:
     ```bash
-    uv run mcp-client/client-demo.py
+    # Voice-controlled mode (microphone input + GLM-ASR)
+    uv run client/client.py --voice
+
+    # Interactive mode (keyboard input)
+    uv run client/client.py --interactive
+
+    # Simple mode (no MCP integration)
+    uv run client/client.py --simple
     ```
+
+### Client Modes
+- **Voice Mode** (`--voice`): Uses microphone with VAD (Voice Activity Detection) to capture speech, transcribes with GLM-ASR, and responds with TTS.
+- **Interactive Mode** (`--interactive`, default): Keyboard input in terminal, connects to MCP server for Live2D expressions.
+- **Simple Mode** (`--simple`): Keyboard input without MCP integration.
 
 ## Checklist
 
@@ -33,17 +45,18 @@ If first time using, make sure to install dependencies first:
 - [x] Basic FastMCP server setup
 - [x] Integrate ZhipuAI APIs
     - [x] LLM (Large Language Model)
-    - [x] ASR (Automatic Speech Recognition)
+    - [x] ASR (Automatic Speech Recognition) with GLM-ASR
     - [x] TTS (Text-to-Speech)
 - [x] Define API endpoints
 - [x] Connect to frontend
+- [x] Microphone recording with VAD (Voice Activity Detection)
 
 ### Frontend
-- [ ] Connection to backend API
+- [x] Connection to backend API
     - [x] A simple UI layout
-    - [ ] A display area for text responses received from the backend
+    - [x] Chat panel for displaying conversation (bubble-style messages)
     - [x] Connection to play audio responses received from the backend
-    - [ ] Avalidation of voice input recording and sending to backend
+    - [x] Text input box for manual message entry
 - [x] `Cubism` model integration
 
 ### Advanced

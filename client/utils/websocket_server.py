@@ -1,16 +1,18 @@
 """
-WebSocket Server - Send audio to frontend for lip sync.
+WebSocket Server - Bidirectional communication with frontend.
 
 This module provides a WebSocket server that:
 - Accepts connections from the frontend
 - Sends audio data for playback with lip sync
+- Sends chat messages (user and AI)
+- Receives text input from frontend
 - Supports sentence-by-sentence audio delivery
 """
 
 import asyncio
 import base64
 import json
-from typing import Optional, Set
+from typing import Callable, Optional, Set
 
 import websockets
 from loguru import logger as lg
@@ -21,10 +23,10 @@ from .tts_controller import TTSController
 
 class AudioWebSocketServer:
     """
-    WebSocket server for sending audio to frontend.
+    WebSocket server for bidirectional frontend communication.
 
-    Manages client connections and sends audio data
-    for playback and lip sync.
+    Manages client connections, sends audio/chat data,
+    and receives user input from the frontend.
     """
 
     def __init__(self, host: str = "localhost", port: int = 7789):
@@ -40,7 +42,20 @@ class AudioWebSocketServer:
         self.clients: Set[WebSocketServerProtocol] = set()
         self._server: Optional[websockets.WebSocketServer] = None
         self._running = False
+
+        # Callbacks for handling incoming messages
+        self._on_text_input: Optional[Callable[[str], None]] = None
+
         lg.info(f"[AudioWebSocketServer] Initialized on {host}:{port}")
+
+    def set_on_text_input(self, callback: Optional[Callable[[str], None]]) -> None:
+        """
+        Set callback for text input received from frontend.
+
+        Args:
+            callback: Function to call with text input
+        """
+        self._on_text_input = callback
 
     async def _register(self, websocket: WebSocketServerProtocol) -> None:
         """Register a new client connection."""
@@ -79,10 +94,22 @@ class AudioWebSocketServer:
 
                     if msg_type == "ping":
                         await websocket.send(json.dumps({"type": "pong"}))
+
                     elif msg_type == "ready":
                         lg.debug("[AudioWebSocketServer] Client ready for audio")
+
                     elif msg_type == "playback_complete":
                         lg.debug("[AudioWebSocketServer] Client finished playback")
+
+                    elif msg_type == "text_input":
+                        # Handle text input from frontend
+                        text = data.get("text", "").strip()
+                        if text and self._on_text_input:
+                            lg.info(f"[AudioWebSocketServer] Received text input: {text[:50]}...")
+                            # Run callback in a way that doesn't block WebSocket
+                            asyncio.create_task(
+                                self._handle_text_input_async(text)
+                            )
 
                 except json.JSONDecodeError:
                     lg.warning(f"[AudioWebSocketServer] Invalid JSON received: {message}")
@@ -91,6 +118,19 @@ class AudioWebSocketServer:
             pass
         finally:
             await self._unregister(websocket)
+
+    async def _handle_text_input_async(self, text: str) -> None:
+        """
+        Handle text input asynchronously.
+
+        Args:
+            text: Text input from user
+        """
+        if self._on_text_input:
+            # If callback is a coroutine, await it
+            result = self._on_text_input(text)
+            if asyncio.iscoroutine(result):
+                await result
 
     async def send_audio(self, audio_data: bytes, text: str) -> None:
         """
@@ -127,6 +167,66 @@ class AudioWebSocketServer:
         # Wait for clients to acknowledge playback
         # This ensures sequential playback of sentences
         await self._wait_for_playback()
+
+    async def send_user_message(self, text: str, source: str = "voice") -> None:
+        """
+        Send user message to frontend for display in chat.
+
+        Args:
+            text: User's message text
+            source: Message source ('voice' or 'text')
+        """
+        if not self.clients:
+            lg.warning("[AudioWebSocketServer] No clients connected, skipping send")
+            return
+
+        message = json.dumps({
+            "type": "user_message",
+            "text": text,
+            "source": source,
+        })
+
+        await self._broadcast(message)
+        lg.info(f"[AudioWebSocketServer] Sent user message ({source}): {text[:50]}...")
+
+    async def send_ai_message(self, text: str) -> None:
+        """
+        Send AI response message to frontend for display in chat.
+
+        Args:
+            text: AI's response text
+        """
+        if not self.clients:
+            lg.warning("[AudioWebSocketServer] No clients connected, skipping send")
+            return
+
+        message = json.dumps({
+            "type": "ai_message",
+            "text": text,
+        })
+
+        await self._broadcast(message)
+        lg.info(f"[AudioWebSocketServer] Sent AI message: {text[:50]}...")
+
+    async def send_status(self, status: str, message: str = "") -> None:
+        """
+        Send status update to frontend.
+
+        Args:
+            status: Status type ('listening', 'processing', 'speaking', 'idle')
+            message: Optional status message
+        """
+        if not self.clients:
+            return
+
+        msg = json.dumps({
+            "type": "status",
+            "status": status,
+            "message": message,
+        })
+
+        await self._broadcast(msg)
+        lg.debug(f"[AudioWebSocketServer] Sent status: {status}")
 
     async def _wait_for_playback(self, timeout: float = 30.0) -> None:
         """
@@ -200,6 +300,13 @@ async def run_standalone_server(host: str = "localhost", port: int = 7789) -> No
         port: Port to listen on
     """
     server = AudioWebSocketServer(host, port)
+
+    # Test callback
+    def on_text_input(text: str) -> None:
+        print(f"Received text input: {text}")
+
+    server.set_on_text_input(on_text_input)
+
     await server.start()
 
     lg.info(f"[AudioWebSocketServer] Running standalone on ws://{host}:{port}")
