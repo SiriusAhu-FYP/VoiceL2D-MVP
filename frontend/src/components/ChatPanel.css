@@ -43,33 +43,6 @@
     letter-spacing: 0.5px;
 }
 
-.chat-panel-header-right {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-}
-
-.chat-panel-status {
-    font-size: 11px;
-    color: rgba(99, 102, 241, 0.9);
-    padding: 3px 8px;
-    background: rgba(99, 102, 241, 0.15);
-    border-radius: 10px;
-    animation: pulse-status 2s ease-in-out infinite;
-}
-
-@keyframes pulse-status {
-
-    0%,
-    100% {
-        opacity: 1;
-    }
-
-    50% {
-        opacity: 0.6;
-    }
-}
-
 .chat-panel-toggle {
     width: 24px;
     height: 24px;
@@ -97,12 +70,15 @@
     display: flex;
     gap: 10px;
     align-items: center;
+    position: relative;
+    z-index: 10;
 }
 
 /* Character Selector */
 .character-selector-container {
     position: relative;
     flex: 1;
+    z-index: 100;
 }
 
 .character-selector-btn {
@@ -143,23 +119,37 @@
 
 .character-selector-dropdown {
     position: absolute;
-    bottom: 100%;
+    top: 100%;
     left: 0;
     right: 0;
-    margin-bottom: 8px;
+    margin-top: 4px;
+    max-height: 200px;
+    overflow-y: auto;
     background: rgba(30, 30, 40, 0.98);
     border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: 10px;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
-    overflow: hidden;
     z-index: 1001;
     animation: dropdown-slide 0.2s ease;
+}
+
+.character-selector-dropdown::-webkit-scrollbar {
+    width: 5px;
+}
+
+.character-selector-dropdown::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.character-selector-dropdown::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.15);
+    border-radius: 3px;
 }
 
 @keyframes dropdown-slide {
     from {
         opacity: 0;
-        transform: translateY(8px);
+        transform: translateY(-8px);
     }
 
     to {

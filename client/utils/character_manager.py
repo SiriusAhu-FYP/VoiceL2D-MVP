@@ -42,12 +42,32 @@ class CharacterManager:
     including their prompts and voice settings.
     """
 
+    SYSTEM_PROMPT_FILE = "SYSTEM_PROMPT.md"
+
     def __init__(self):
         """Initialize the character manager."""
         self.characters: dict[str, CharacterConfig] = {}
         self.current_character: Optional[str] = None
-        self._current_prompt: str = ""
+        self._system_prompt: str = ""
+        self._character_prompt: str = ""
+        self._load_system_prompt()
         self._load_characters()
+
+    def _load_system_prompt(self) -> None:
+        """Load the global system prompt from SYSTEM_PROMPT.md."""
+        prompt_path = config.project_root / self.SYSTEM_PROMPT_FILE
+        try:
+            if prompt_path.exists():
+                self._system_prompt = prompt_path.read_text(encoding="utf-8")
+                lg.info(f"[CharacterManager] Loaded system prompt from {prompt_path}")
+            else:
+                lg.warning(
+                    f"[CharacterManager] System prompt not found: {prompt_path}"
+                )
+                self._system_prompt = ""
+        except Exception as e:
+            lg.error(f"[CharacterManager] Error loading system prompt: {e}")
+            self._system_prompt = ""
 
     def _load_characters(self) -> None:
         """Load character configurations from charas.toml."""
@@ -139,12 +159,16 @@ class CharacterManager:
 
     def get_current_prompt(self) -> str:
         """
-        Get the current character's system prompt.
+        Get the combined system + character prompt.
+
+        The prompt is constructed by concatenating:
+        1. Global system prompt (from SYSTEM_PROMPT.md)
+        2. Character-specific prompt (from characters/*.md)
 
         Returns:
-            System prompt string
+            Combined prompt string
         """
-        return self._current_prompt
+        return f"{self._system_prompt}\n{self._character_prompt}"
 
     def get_current_voice(self) -> Optional[VoiceConfig]:
         """
@@ -179,7 +203,7 @@ class CharacterManager:
         self.current_character = char_id
 
         # Load the character's prompt
-        self._current_prompt = self._load_prompt_file(char.prompt_path)
+        self._character_prompt = self._load_prompt_file(char.prompt_path)
 
         lg.info(f"[CharacterManager] Switched to character: {char.name} ({char_id})")
         return True
@@ -201,7 +225,7 @@ class CharacterManager:
         if not char:
             return False
 
-        self._current_prompt = self._load_prompt_file(char.prompt_path)
+        self._character_prompt = self._load_prompt_file(char.prompt_path)
         lg.info(f"[CharacterManager] Refreshed prompt for: {char.name}")
         return True
 
@@ -239,7 +263,7 @@ class CharacterManager:
             return {
                 "id": char.id,
                 "name": char.name,
-                "prompt_text": char.voice.prompt_text,  # TTS reference text
+                "description": f"《原神》角色{char.name}",
                 "is_current": char_id == self.current_character,
             }
         return None

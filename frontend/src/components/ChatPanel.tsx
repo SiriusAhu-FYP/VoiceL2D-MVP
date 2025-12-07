@@ -20,7 +20,7 @@ export interface ChatMessage {
 export interface CharacterInfo {
     id: string;
     name: string;
-    prompt_text: string;
+    description: string;
     is_current: boolean;
 }
 
@@ -31,8 +31,6 @@ export interface ChatPanelProps {
     onSendMessage?: (text: string) => void;
     /** Whether the system is currently processing */
     isProcessing?: boolean;
-    /** Current status text to display */
-    statusText?: string;
     /** Whether voice input is enabled */
     isListening?: boolean;
     /** Callback to toggle voice input */
@@ -49,7 +47,6 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     messages: externalMessages,
     onSendMessage,
     isProcessing = false,
-    statusText,
     isListening = false,
     onToggleListening,
     characters = [],
@@ -149,20 +146,15 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             {/* Header */}
             <div className="chat-panel-header" onClick={() => setIsExpanded(!isExpanded)}>
                 <span className="chat-panel-title">对话</span>
-                <div className="chat-panel-header-right">
-                    {statusText && (
-                        <span className="chat-panel-status">{statusText}</span>
-                    )}
-                    <button
-                        className="chat-panel-toggle"
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            setIsExpanded(!isExpanded);
-                        }}
-                    >
-                        {isExpanded ? '−' : '+'}
-                    </button>
-                </div>
+                <button
+                    className="chat-panel-toggle"
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        setIsExpanded(!isExpanded);
+                    }}
+                >
+                    {isExpanded ? '−' : '+'}
+                </button>
             </div>
 
             {isExpanded && (
@@ -204,7 +196,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                                                     {character.name}
                                                 </span>
                                                 <span className="character-option-hint">
-                                                    {character.prompt_text.substring(0, 20)}...
+                                                    {character.description}
                                                 </span>
                                                 {character.is_current && (
                                                     <span className="character-option-check">✓</span>

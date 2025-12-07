@@ -96,7 +96,6 @@ export const Live2DComponent: React.FC = () => {
     // Chat state
     const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
     const [isProcessing, setIsProcessing] = useState<boolean>(false);
-    const [statusText, setStatusText] = useState<string>('');
     const [isListening, setIsListening] = useState<boolean>(false);
     const [characters, setCharacters] = useState<CharacterInfo[]>([]);
     const [isAudioLocked, setIsAudioLocked] = useState<boolean>(false);
@@ -415,13 +414,6 @@ export const Live2DComponent: React.FC = () => {
                         break;
 
                     case 'status': {
-                        const statusMap: Record<string, string> = {
-                            listening: '正在聆听...',
-                            processing: '处理中...',
-                            speaking: '正在回复...',
-                            idle: '',
-                        };
-                        setStatusText(statusMap[msg.status] || msg.message || '');
                         setIsProcessing(msg.status === 'processing');
                         // Only update isListening based on status, don't override command_response
                         // The actual listening state is managed by toggle_listening command
@@ -483,11 +475,9 @@ export const Live2DComponent: React.FC = () => {
 
         addChatMessage('user', text, 'text');
         setIsProcessing(true);
-        setStatusText('处理中...');
 
         if (!sendWsMessage({ type: 'text_input', text })) {
             setIsProcessing(false);
-            setStatusText('连接断开');
         }
     }, [addChatMessage, sendWsMessage]);
 
@@ -963,7 +953,6 @@ export const Live2DComponent: React.FC = () => {
                 messages={chatMessages}
                 onSendMessage={handleSendMessage}
                 isProcessing={isProcessing}
-                statusText={statusText}
                 isListening={isListening}
                 onToggleListening={handleToggleListening}
                 characters={characters}

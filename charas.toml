@@ -38,3 +38,36 @@ sovits_weights_path = "/home/ahu/GPT-SoVITS-Inference/砂糖/砂糖_e10_s590.pth
 ref_audio_path = "/home/ahu/GPT-SoVITS-Inference/砂糖/是的，他致力于探究世界的真相，已经有了很多很多伟大的成果。.wav"
 prompt_text = "是的，他致力于探究世界的真相，已经有了很多很多伟大的成果。"
 prompt_lang = "zh"
+
+[characters.Venti]
+name = "温迪"
+prompt_path = "characters/Venti.md"
+
+[characters.Venti.voice]
+gpt_weights_path = "/home/ahu/GPT-SoVITS-Inference/温迪/温迪-e10.ckpt"
+sovits_weights_path = "/home/ahu/GPT-SoVITS-Inference/温迪/温迪_e10_s1170.pth"
+ref_audio_path = "/home/ahu/GPT-SoVITS-Inference/温迪/他曾经与我一同聆听风的歌唱，一同弹奏蒲公英的诗篇.wav"
+prompt_text = "他曾经与我一同聆听风的歌唱，一同弹奏蒲公英的诗篇"
+prompt_lang = "zh"
+
+[characters.Zhongli]
+name = "钟离"
+prompt_path = "characters/Zhongli.md"
+
+[characters.Zhongli.voice]
+gpt_weights_path = "/home/ahu/GPT-SoVITS-Inference/钟离/钟离-e10.ckpt"
+sovits_weights_path = "/home/ahu/GPT-SoVITS-Inference/钟离/钟离_e10_s1120.pth"
+ref_audio_path = "/home/ahu/GPT-SoVITS-Inference/钟离/无事逢客休，席上校两棋…我们开局吧。.wav"
+prompt_text = "无事逢客休，席上校两棋…我们开局吧。"
+prompt_lang = "zh"
+
+[characters.Ganyu]
+name = "甘雨"
+prompt_path = "characters/Ganyu.md"
+
+[characters.Ganyu.voice]
+gpt_weights_path = "/home/ahu/GPT-SoVITS-Inference/甘雨/甘雨-e10.ckpt"
+sovits_weights_path = "/home/ahu/GPT-SoVITS-Inference/甘雨/甘雨_e10_s170.pth"
+ref_audio_path = "/home/ahu/GPT-SoVITS-Inference/甘雨/但只要最后落在具体的「人」身上，那，我可以想办法。.wav"
+prompt_text = "但只要最后落在具体的「人」身上，那，我可以想办法。"
+prompt_lang = "zh"
