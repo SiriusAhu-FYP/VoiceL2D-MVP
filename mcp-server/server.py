@@ -1,6 +1,6 @@
 """Lightweight MCP server that proxies Live2D frontend utilities."""
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Literal, Optional
 
 import requests
 from fastmcp import FastMCP
@@ -15,6 +15,8 @@ frontend_url = "http://localhost:7788"
 
 # Initialize controller at startup
 controller = get_controller(frontend_url)
+
+EmotionType = Literal["angry", "neutral", "happy", "sad", "surprise", "speechless"]
 
 
 class AcceptHeaderFriendlyMiddleware(BaseHTTPMiddleware):
@@ -185,29 +187,21 @@ def _post(path: str, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
 
 @mcp.tool
-def play_expression(emotion: str):
+def play_expression(emotion: EmotionType):
     """
-    Play an expression based on abstract emotion category.
+    REQUIRED: Call this tool to synchronize the character's facial expression with the text response.
 
-    This tool maps abstract emotions to model-specific expression IDs and plays them.
-    If the current model is not in the mapping, falls back to random expression.
+    You MUST analyze the emotional tone of your response and select the best match:
 
-    Supported emotion categories:
-    - "angry": Angry, frustrated, annoyed
-    - "neutral": Calm, peaceful, default state
-    - "happy": Excited, joyful, celebrating
-    - "sad": Sad, regretful, comforting
-    - "surprise": Surprised, shocked, unexpected
-    - "speechless": Speechless, awkward, embarrassed, helpless, sarcastic
-
-    The system automatically:
-    1. Detects the current Live2D model
-    2. Maps the emotion to appropriate expression(s) for that model
-    3. Randomly selects one if multiple options exist
-    4. Falls back to random expression if model is not mapped
+    - "angry": Use when complaining, stomping feet, annoyed, or being teased. (e.g. "Humph!", "So annoying!")
+    - "happy": Use when celebrating, seeing food/treasure, or cheering. (e.g. "Yay!", "Delicious!")
+    - "sad": Use when disappointed, hurt, or sympathetic.
+    - "surprise": Use when shocked, seeing monsters, or unexpected events. (e.g. "Wah?!")
+    - "speechless": Use for awkward silence, sarcasm, or "..." moments. (e.g. "Ugh...", "Really?")
+    - "neutral": Only use when stating dry facts with ZERO emotion.
 
     Args:
-        emotion: One of: neutral, happy, sad, surprise, speechless
+        emotion: One of: angry, happy, sad, surprise, speechless, neutral
 
     Returns:
         Status message indicating success or failure
