@@ -13,25 +13,29 @@ from loguru import logger as lg
 
 class ConfigLoader:
     """
-    Loader for configuration from config.toml.
+    Loader for configuration from config.toml and charas.toml.
 
     Provides typed access to configuration values with defaults.
     """
 
     _instance: Optional["ConfigLoader"] = None
     _config: dict[str, Any] = {}
+    _charas_config: dict[str, Any] = {}
+    _project_root: Optional[Path] = None
 
     def __new__(cls) -> "ConfigLoader":
         """Singleton pattern to ensure config is loaded once."""
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance._load_config()
+            cls._instance._load_charas_config()
         return cls._instance
 
     def _load_config(self) -> None:
         """Load configuration from config.toml."""
         # Look for config.toml in project root
-        config_path = Path(__file__).parent.parent.parent / "config.toml"
+        self._project_root = Path(__file__).parent.parent.parent
+        config_path = self._project_root / "config.toml"
 
         if not config_path.exists():
             lg.warning(f"[Config] config.toml not found at {config_path}")
@@ -44,6 +48,32 @@ class ConfigLoader:
         except toml.TomlDecodeError as e:
             lg.error(f"[Config] Failed to parse config.toml: {e}")
             self._config = {}
+
+    def _load_charas_config(self) -> None:
+        """Load character configuration from charas.toml."""
+        if self._project_root is None:
+            self._project_root = Path(__file__).parent.parent.parent
+
+        charas_path = self._project_root / "charas.toml"
+
+        if not charas_path.exists():
+            lg.warning(f"[Config] charas.toml not found at {charas_path}")
+            self._charas_config = {}
+            return
+
+        try:
+            self._charas_config = toml.load(charas_path)
+            lg.debug(f"[Config] Loaded charas from {charas_path}")
+        except toml.TomlDecodeError as e:
+            lg.error(f"[Config] Failed to parse charas.toml: {e}")
+            self._charas_config = {}
+
+    @property
+    def project_root(self) -> Path:
+        """Get the project root path."""
+        if self._project_root is None:
+            self._project_root = Path(__file__).parent.parent.parent
+        return self._project_root
 
     def get(self, *keys: str, default: Any = None) -> Any:
         """
@@ -126,7 +156,7 @@ class ConfigLoader:
     # Audio Configuration
     @property
     def audio_sample_rate(self) -> int:
-        return self.get("audio", "sample_rate", default=16000)
+        return self.get("audio", "sample_rate", default=48000)
 
     @property
     def audio_channels(self) -> int:
@@ -140,14 +170,28 @@ class ConfigLoader:
     def audio_lock_buffer(self) -> float:
         return self.get("audio", "lock_buffer_seconds", default=2.0)
 
-    # Voice Profiles
-    def get_voices(self) -> dict[str, dict]:
-        """Get all voice profiles."""
-        return self.get("voices", default={})
+    # Character Profiles (from charas.toml)
+    def get_characters(self) -> dict[str, dict]:
+        """Get all character profiles from charas.toml."""
+        return self._charas_config.get("characters", {})
 
-    def get_voice(self, name: str) -> Optional[dict]:
-        """Get a specific voice profile."""
-        return self.get("voices", name, default=None)
+    def get_character(self, name: str) -> Optional[dict]:
+        """
+        Get a specific character profile.
+
+        Args:
+            name: Character name (e.g., "Paimon")
+
+        Returns:
+            Character config dict or None if not found
+        """
+        characters = self.get_characters()
+        return characters.get(name)
+
+    def reload_charas_config(self) -> None:
+        """Reload character configuration from charas.toml."""
+        self._load_charas_config()
+        lg.info("[Config] Character configuration reloaded")
 
 
 # Global config instance

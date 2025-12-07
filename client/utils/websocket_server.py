@@ -282,6 +282,23 @@ class AudioWebSocketServer:
 
         await self._broadcast(msg)
 
+    async def send_characters_list(self, characters: list[dict[str, Any]]) -> None:
+        """
+        Send list of available characters to frontend.
+
+        Args:
+            characters: List of character info dicts
+        """
+        if not self.clients:
+            return
+
+        msg = json.dumps({
+            "type": "characters_list",
+            "characters": characters,
+        })
+
+        await self._broadcast(msg)
+
     async def send_command_response(self, command: str, response: dict) -> None:
         """
         Send response to a command from frontend.

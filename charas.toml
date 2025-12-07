@@ -1,0 +1,40 @@
+# ============================================
+# Character Profiles Configuration
+# ============================================
+# Each character includes:
+# - name: Display name
+# - prompt_path: Path to system prompt markdown file
+# - voice.*: TTS voice configuration (GPT-SoVITS)
+
+[characters.Paimon]
+name = "派蒙"
+prompt_path = "characters/Paimon.md"
+
+[characters.Paimon.voice]
+gpt_weights_path = "/home/ahu/GPT-SoVITS-Inference/派蒙/派蒙-e10.ckpt"
+sovits_weights_path = "/home/ahu/GPT-SoVITS-Inference/派蒙/派蒙_e10_s19390.pth"
+ref_audio_path = "/home/ahu/GPT-SoVITS-Inference/派蒙/平静-好耶！《特尔克西的奇幻历险》出发咯！.wav"
+prompt_text = "好耶！《特尔克西的奇幻历险》出发咯！"
+prompt_lang = "zh"
+
+[characters.XiangLing]
+name = "香菱"
+prompt_path = "characters/Xiangling.md"
+
+[characters.XiangLing.voice]
+gpt_weights_path = "/home/ahu/GPT-SoVITS-Inference/香菱/香菱-e10.ckpt"
+sovits_weights_path = "/home/ahu/GPT-SoVITS-Inference/香菱/香菱_e10_s630.pth"
+ref_audio_path = "/home/ahu/GPT-SoVITS-Inference/香菱/哇，这么多人都在这里玩牌…他们的肚子会不会饿了呀？.wav"
+prompt_text = "哇，这么多人都在这里玩牌…他们的肚子会不会饿了呀？"
+prompt_lang = "zh"
+
+[characters.Sucrose]
+name = "砂糖"
+prompt_path = "characters/Sucrose.md"
+
+[characters.Sucrose.voice]
+gpt_weights_path = "/home/ahu/GPT-SoVITS-Inference/砂糖/砂糖-e10.ckpt"
+sovits_weights_path = "/home/ahu/GPT-SoVITS-Inference/砂糖/砂糖_e10_s590.pth"
+ref_audio_path = "/home/ahu/GPT-SoVITS-Inference/砂糖/是的，他致力于探究世界的真相，已经有了很多很多伟大的成果。.wav"
+prompt_text = "是的，他致力于探究世界的真相，已经有了很多很多伟大的成果。"
+prompt_lang = "zh"

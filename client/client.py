@@ -22,7 +22,6 @@ import json
 import os
 import re
 import time
-from pathlib import Path
 from typing import Any, Optional
 
 import numpy as np
@@ -33,9 +32,9 @@ from openai import OpenAI
 from utils import (
     AudioRecorder,
     AudioWebSocketServer,
+    CharacterManager,
     ContinuousVAD,
     TTSController,
-    VoiceManager,
     config,
     create_asr_controller,
 )
@@ -143,8 +142,8 @@ class VoiceL2DClient:
         # TTS controller
         self.tts = TTSController()
 
-        # Voice manager
-        self.voice_manager = VoiceManager()
+        # Character manager (handles both persona prompts and voice configs)
+        self.character_manager = CharacterManager()
 
         # ASR controller (auto-selects based on ASR_MODE env var)
         self.asr = create_asr_controller()
@@ -166,14 +165,11 @@ class VoiceL2DClient:
         # WebSocket server
         self.ws_server = AudioWebSocketServer(WEBSOCKET_HOST, WEBSOCKET_PORT)
 
-        # Load system prompt
-        self.system_prompt = self._load_system_prompt()
-
-        # Conversation history
+        # Conversation history (multi-turn context)
         self.messages: list[dict] = []
 
-        # Voice caching
-        self._loaded_voice_name: Optional[str] = None
+        # Voice caching (track loaded TTS voice)
+        self._loaded_character: Optional[str] = None
 
         # Recording state - starts OFF, frontend controls it
         self._is_listening = False
@@ -283,21 +279,6 @@ class VoiceL2DClient:
         if self._audio_lock_until > 0 and time.time() >= self._audio_lock_until:
             await self._unlock_audio(forced=True)
 
-    def _load_system_prompt(self) -> str:
-        """Load system prompt from system_prompt.md file."""
-        system_prompt_path = Path(__file__).parent / "system_prompt.md"
-        try:
-            with open(system_prompt_path, "r", encoding="utf-8") as f:
-                content = f.read().strip()
-                lg.info("[VoiceL2DClient] Loaded system prompt")
-                return content
-        except FileNotFoundError:
-            lg.warning("[VoiceL2DClient] system_prompt.md not found")
-            return ""
-        except Exception as e:
-            lg.warning(f"[VoiceL2DClient] Failed to load system prompt: {e}")
-            return ""
-
     def _adapt_tools(self, tools) -> list[dict]:
         """Convert FastMCP tool objects to OpenAI format."""
         openai_tools = []
@@ -331,23 +312,23 @@ class VoiceL2DClient:
             return f"Error: {str(e)}"
 
     def _ensure_voice_loaded(self) -> bool:
-        """Ensure the current voice is loaded on TTS server."""
-        voice_config = self.voice_manager.get_current_voice()
+        """Ensure the current character's voice is loaded on TTS server."""
+        voice_config = self.character_manager.get_current_voice()
         if not voice_config:
-            lg.warning("[VoiceL2DClient] No voice configured")
+            lg.warning("[VoiceL2DClient] No voice configured for current character")
             return False
 
-        current_voice_name = self.voice_manager.current_voice
+        current_character = self.character_manager.current_character
 
-        if self._loaded_voice_name == current_voice_name:
+        if self._loaded_character == current_character:
             return True
 
-        lg.debug(f"[TTS] Loading voice: {current_voice_name}")
+        lg.debug(f"[TTS] Loading voice for character: {current_character}")
         if self.tts.load_voice(voice_config):
-            self._loaded_voice_name = current_voice_name
+            self._loaded_character = current_character
             return True
         else:
-            lg.error(f"[VoiceL2DClient] Failed to load voice: {current_voice_name}")
+            lg.error(f"[VoiceL2DClient] Failed to load voice for: {current_character}")
             return False
 
     async def speak(self, text: str) -> None:
@@ -355,7 +336,7 @@ class VoiceL2DClient:
         if not self._ensure_voice_loaded():
             return
 
-        voice_config = self.voice_manager.get_current_voice()
+        voice_config = self.character_manager.get_current_voice()
         if not voice_config:
             return
 
@@ -412,26 +393,39 @@ class VoiceL2DClient:
             await self._unlock_audio()
             await self.ws_server.send_status("idle")
 
-    def get_voices_info(self) -> list[dict[str, Any]]:
-        """Get list of available voices with their info."""
-        voices = []
-        for voice_name in self.voice_manager.list_voices():
-            info = self.voice_manager.get_voice_info(voice_name)
-            if info:
-                voices.append({
-                    "name": info["name"],
-                    "prompt_text": info["prompt_text"],
-                    "is_current": voice_name == self.voice_manager.current_voice,
-                })
-        return voices
+    def get_characters_info(self) -> list[dict[str, Any]]:
+        """Get list of available characters with their info."""
+        return self.character_manager.get_all_characters_info()
 
-    def switch_voice(self, voice_name: str) -> bool:
-        """Switch to a different TTS voice."""
-        if self.voice_manager.set_current_voice(voice_name):
-            if self._loaded_voice_name != voice_name:
-                lg.info(f"[Voice] Switched to: {voice_name}")
+    def switch_character(self, char_id: str) -> bool:
+        """
+        Switch to a different character.
+
+        This changes the persona prompt and TTS voice, and clears chat history.
+
+        Args:
+            char_id: Character ID (e.g., "Paimon")
+
+        Returns:
+            True if switch was successful
+        """
+        if self.character_manager.switch_character(char_id):
+            # Clear conversation history for new character
+            self.messages.clear()
+            lg.info(f"[Character] Switched to: {char_id}, chat history cleared")
             return True
         return False
+
+    def refresh_prompt(self) -> bool:
+        """
+        Refresh the current character's prompt from file.
+
+        Useful for hot-reloading prompt changes without restarting.
+
+        Returns:
+            True if refresh was successful
+        """
+        return self.character_manager.refresh_prompt()
 
     async def process_user_input(
         self, text: str, source: str = "text"
@@ -464,9 +458,12 @@ class VoiceL2DClient:
         """Process a user message and generate a response."""
         self.messages.append({"role": "user", "content": user_message})
 
+        # Get current character's system prompt
+        system_prompt = self.character_manager.get_current_prompt()
+
         messages_to_send = []
-        if self.system_prompt:
-            messages_to_send.append({"role": "system", "content": self.system_prompt})
+        if system_prompt:
+            messages_to_send.append({"role": "system", "content": system_prompt})
         messages_to_send.extend(self.messages)
 
         response = self.llm.chat.completions.create(
@@ -483,9 +480,12 @@ class VoiceL2DClient:
         """Process a user message with tool support."""
         self.messages.append({"role": "user", "content": user_message})
 
+        # Get current character's system prompt
+        system_prompt = self.character_manager.get_current_prompt()
+
         messages_to_send = []
-        if self.system_prompt:
-            messages_to_send.append({"role": "system", "content": self.system_prompt})
+        if system_prompt:
+            messages_to_send.append({"role": "system", "content": system_prompt})
         messages_to_send.extend(self.messages)
 
         response = self.llm.chat.completions.create(
@@ -528,10 +528,10 @@ class VoiceL2DClient:
                 })
 
             messages_to_send = []
-            if self.system_prompt:
+            if system_prompt:
                 messages_to_send.append({
                     "role": "system",
-                    "content": self.system_prompt,
+                    "content": system_prompt,
                 })
             messages_to_send.extend(self.messages)
 
@@ -656,29 +656,39 @@ class VoiceL2DClient:
                 await self.start_listening()
             elif not enabled and self._is_listening:
                 self.stop_listening()
+                await self.ws_server.send_status("idle")
             return {"success": True, "listening": self._is_listening}
 
-        elif command == "get_voices":
-            voices = self.get_voices_info()
-            return {"success": True, "voices": voices}
+        elif command == "get_characters":
+            characters = self.get_characters_info()
+            return {"success": True, "characters": characters}
 
-        elif command == "switch_voice":
-            voice_name = data.get("voice_name")
-            if voice_name:
-                success = self.switch_voice(voice_name)
+        elif command == "switch_character":
+            char_id = data.get("character_id")
+            if char_id:
+                success = self.switch_character(char_id)
                 return {
                     "success": success,
-                    "current_voice": self.voice_manager.current_voice,
+                    "current_character": self.character_manager.current_character,
                 }
-            return {"success": False, "error": "No voice_name provided"}
+            return {"success": False, "error": "No character_id provided"}
+
+        elif command == "refresh_prompt":
+            success = self.refresh_prompt()
+            return {
+                "success": success,
+                "current_character": self.character_manager.current_character,
+            }
 
         elif command == "get_status":
+            current_char = self.character_manager.get_current_character()
             return {
                 "success": True,
                 "listening": self._is_listening,
                 "audio_locked": self._is_audio_locked(),
-                "current_voice": self.voice_manager.current_voice,
-                "loaded_voice": self._loaded_voice_name,
+                "current_character": self.character_manager.current_character,
+                "current_character_name": current_char.name if current_char else None,
+                "loaded_character": self._loaded_character,
             }
 
         else:
@@ -778,11 +788,14 @@ class VoiceL2DClient:
 
                 self._tools_config = self._adapt_tools(available_tools)
 
-                # Log available voices
-                voices = self.voice_manager.list_voices()
-                lg.info(f"[Voices] {voices}")
+                # Log available characters
+                characters = self.character_manager.list_characters()
+                lg.info(f"[Characters] {characters}")
+                current_char = self.character_manager.get_current_character()
                 lg.info(
-                    f"[VoiceL2DClient] Current voice: {self.voice_manager.current_voice}"
+                    f"[VoiceL2DClient] Current character: "
+                    f"{current_char.name if current_char else 'None'} "
+                    f"({self.character_manager.current_character})"
                 )
 
                 lg.info("")
@@ -795,7 +808,7 @@ class VoiceL2DClient:
 
                 # Send initial status to frontend
                 await self.ws_server.send_status("idle")
-                await self.ws_server.send_voices_list(self.get_voices_info())
+                await self.ws_server.send_characters_list(self.get_characters_info())
 
                 # Run the text input queue processor
                 queue_task = asyncio.create_task(self._process_text_input_queue())

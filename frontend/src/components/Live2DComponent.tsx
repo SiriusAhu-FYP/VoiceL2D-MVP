@@ -4,7 +4,7 @@ import { Live2DModel } from 'pixi-live2d-display/cubism4';
 import { startUpCubism4, cubism4Ready } from 'pixi-live2d-display/cubism4';
 import { ActionPanel } from './ActionPanel';
 import { ChatPanel } from './ChatPanel';
-import type { ChatMessage, VoiceInfo } from './ChatPanel';
+import type { ChatMessage, CharacterInfo } from './ChatPanel';
 import { updateCurrentModelState, getActions, getModelPath } from '../api/live2d-api';
 import testAudioUrl from '../assets/test_audio.wav';
 
@@ -98,7 +98,7 @@ export const Live2DComponent: React.FC = () => {
     const [isProcessing, setIsProcessing] = useState<boolean>(false);
     const [statusText, setStatusText] = useState<string>('');
     const [isListening, setIsListening] = useState<boolean>(false);
-    const [voices, setVoices] = useState<VoiceInfo[]>([]);
+    const [characters, setCharacters] = useState<CharacterInfo[]>([]);
     const [isAudioLocked, setIsAudioLocked] = useState<boolean>(false);
 
     // Lip sync refs
@@ -389,6 +389,8 @@ export const Live2DComponent: React.FC = () => {
         ws.onopen = () => {
             console.log('[WS] Connected');
             ws.send(JSON.stringify({ type: 'ready' }));
+            // Request characters list on connect/reconnect
+            ws.send(JSON.stringify({ type: 'command', command: 'get_characters' }));
         };
 
         ws.onmessage = async (event) => {
@@ -421,24 +423,27 @@ export const Live2DComponent: React.FC = () => {
                         };
                         setStatusText(statusMap[msg.status] || msg.message || '');
                         setIsProcessing(msg.status === 'processing');
-                        if (msg.status === 'listening') setIsListening(true);
+                        // Only update isListening based on status, don't override command_response
+                        // The actual listening state is managed by toggle_listening command
                         break;
                     }
 
-                    case 'voices_list':
-                        setVoices(msg.voices || []);
+                    case 'characters_list':
+                        setCharacters(msg.characters || []);
                         break;
 
                     case 'command_response':
                         if (msg.command === 'toggle_listening') {
                             setIsListening(msg.response?.listening || false);
-                        } else if (msg.command === 'get_voices') {
-                            setVoices(msg.response?.voices || []);
-                        } else if (msg.command === 'switch_voice' && msg.response?.success) {
-                            setVoices(prev => prev.map(v => ({
-                                ...v,
-                                is_current: v.name === msg.response.current_voice,
+                        } else if (msg.command === 'get_characters') {
+                            setCharacters(msg.response?.characters || []);
+                        } else if (msg.command === 'switch_character' && msg.response?.success) {
+                            setCharacters(prev => prev.map(c => ({
+                                ...c,
+                                is_current: c.id === msg.response.current_character,
                             })));
+                            // Clear chat messages when character is switched
+                            setChatMessages([]);
                         }
                         break;
 
@@ -491,9 +496,9 @@ export const Live2DComponent: React.FC = () => {
         sendWsMessage({ type: 'command', command: 'toggle_listening', enabled });
     }, [sendWsMessage]);
 
-    // Change TTS voice
-    const handleVoiceChange = useCallback((voiceName: string) => {
-        sendWsMessage({ type: 'command', command: 'switch_voice', voice_name: voiceName });
+    // Change character (switches both voice and persona)
+    const handleCharacterChange = useCallback((characterId: string) => {
+        sendWsMessage({ type: 'command', command: 'switch_character', character_id: characterId });
     }, [sendWsMessage]);
 
     const handlePlayAction = useCallback((action: string, sound?: string) => {
@@ -961,8 +966,8 @@ export const Live2DComponent: React.FC = () => {
                 statusText={statusText}
                 isListening={isListening}
                 onToggleListening={handleToggleListening}
-                voices={voices}
-                onVoiceChange={handleVoiceChange}
+                characters={characters}
+                onCharacterChange={handleCharacterChange}
                 isAudioLocked={isAudioLocked}
             />
             <ActionPanel

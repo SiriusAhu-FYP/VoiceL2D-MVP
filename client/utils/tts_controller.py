@@ -15,7 +15,7 @@ import requests
 from dotenv import load_dotenv
 from loguru import logger as lg
 
-from .voice_manager import VoiceConfig
+from .character_manager import VoiceConfig
 
 # Load environment variables
 load_dotenv()
@@ -119,7 +119,7 @@ class TTSController:
         Returns:
             True if both weights loaded successfully, False otherwise
         """
-        lg.info(f"[TTSController] Loading voice: {voice_config.name}")
+        lg.info(f"[TTSController] Loading voice weights...")
 
         gpt_success = self.set_gpt_weights(voice_config.gpt_weights_path)
         if not gpt_success:
@@ -129,7 +129,7 @@ class TTSController:
         if not sovits_success:
             return False
 
-        lg.info(f"[TTSController] Voice loaded successfully: {voice_config.name}")
+        lg.info("[TTSController] Voice loaded successfully")
         return True
 
     def generate_audio(

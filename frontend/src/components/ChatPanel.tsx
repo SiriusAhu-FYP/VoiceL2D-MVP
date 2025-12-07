@@ -3,7 +3,7 @@
  *
  * Displays conversation history with bubble-style messages,
  * provides an input box for user text input,
- * and includes voice input toggle and TTS voice selector.
+ * and includes voice input toggle and character selector.
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -17,7 +17,8 @@ export interface ChatMessage {
     timestamp: Date;
 }
 
-export interface VoiceInfo {
+export interface CharacterInfo {
+    id: string;
     name: string;
     prompt_text: string;
     is_current: boolean;
@@ -36,10 +37,10 @@ export interface ChatPanelProps {
     isListening?: boolean;
     /** Callback to toggle voice input */
     onToggleListening?: (enabled: boolean) => void;
-    /** Available TTS voices */
-    voices?: VoiceInfo[];
-    /** Callback when voice is changed */
-    onVoiceChange?: (voiceName: string) => void;
+    /** Available characters */
+    characters?: CharacterInfo[];
+    /** Callback when character is changed */
+    onCharacterChange?: (characterId: string) => void;
     /** Whether audio playback is locking the microphone */
     isAudioLocked?: boolean;
 }
@@ -51,8 +52,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     statusText,
     isListening = false,
     onToggleListening,
-    voices = [],
-    onVoiceChange,
+    characters = [],
+    onCharacterChange,
     isAudioLocked = false,
 }) => {
     // Use external messages if provided, otherwise use internal state
@@ -61,7 +62,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
 
     const [inputText, setInputText] = useState('');
     const [isExpanded, setIsExpanded] = useState(true);
-    const [showVoiceSelector, setShowVoiceSelector] = useState(false);
+    const [showCharacterSelector, setShowCharacterSelector] = useState(false);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLInputElement>(null);
 
@@ -124,13 +125,13 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         }
     }, [isListening, onToggleListening]);
 
-    // Handle voice selection
-    const handleVoiceSelect = useCallback((voiceName: string) => {
-        if (onVoiceChange) {
-            onVoiceChange(voiceName);
+    // Handle character selection
+    const handleCharacterSelect = useCallback((characterId: string) => {
+        if (onCharacterChange) {
+            onCharacterChange(characterId);
         }
-        setShowVoiceSelector(false);
-    }, [onVoiceChange]);
+        setShowCharacterSelector(false);
+    }, [onCharacterChange]);
 
     // Format timestamp
     const formatTime = (date: Date): string => {
@@ -140,8 +141,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         });
     };
 
-    // Get current voice name
-    const currentVoice = voices.find(v => v.is_current);
+    // Get current character
+    const currentCharacter = characters.find(c => c.is_current);
 
     return (
         <div className={`chat-panel ${isExpanded ? 'expanded' : 'collapsed'}`}>
@@ -166,69 +167,58 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
 
             {isExpanded && (
                 <>
-                    {/* Control Bar */}
+                    {/* Control Bar - Character Selector */}
                     <div className="chat-control-bar">
-                        {/* Voice Input Toggle */}
-                        <button
-                            className={`voice-toggle-btn ${isListening ? 'active' : ''} ${isAudioLocked ? 'locked' : ''}`}
-                            onClick={handleVoiceToggle}
-                            disabled={isProcessing || isAudioLocked}
-                            title={isAudioLocked ? '语音播放中...' : (isListening ? '关闭语音输入' : '开启语音输入')}
-                        >
-                            <span className="voice-icon">
-                                {isAudioLocked ? '🔇' : (isListening ? '🎤' : '🎙️')}
-                            </span>
-                            <span className="voice-label">
-                                {isAudioLocked ? '播放中' : (isListening ? '语音已开启' : '语音已关闭')}
-                            </span>
-                        </button>
+                        {/* Character Selector */}
+                        <div className="character-selector-container">
+                            <button
+                                className="character-selector-btn"
+                                onClick={() => setShowCharacterSelector(!showCharacterSelector)}
+                                title="切换角色"
+                            >
+                                <span className="character-selector-icon">👤</span>
+                                <span className="character-selector-label">
+                                    {currentCharacter?.name || '选择角色'}
+                                </span>
+                                <span className="character-selector-arrow">
+                                    {showCharacterSelector ? '▲' : '▼'}
+                                </span>
+                            </button>
 
-                        {/* Voice Selector */}
-                        {voices.length > 0 && (
-                            <div className="voice-selector-container">
-                                <button
-                                    className="voice-selector-btn"
-                                    onClick={() => setShowVoiceSelector(!showVoiceSelector)}
-                                    title="选择TTS音色"
-                                >
-                                    <span className="voice-selector-icon">🔊</span>
-                                    <span className="voice-selector-label">
-                                        {currentVoice?.name || '选择音色'}
-                                    </span>
-                                    <span className="voice-selector-arrow">
-                                        {showVoiceSelector ? '▲' : '▼'}
-                                    </span>
-                                </button>
-
-                                {showVoiceSelector && (
-                                    <div className="voice-selector-dropdown">
-                                        <div className="voice-selector-header">
-                                            TTS 音色列表
-                                            <span className="voice-selector-hint">
-                                                配置文件: client/utils/config.toml
-                                            </span>
-                                        </div>
-                                        {voices.map((voice) => (
+                            {showCharacterSelector && (
+                                <div className="character-selector-dropdown">
+                                    <div className="character-selector-header">
+                                        角色列表
+                                        <span className="character-selector-hint">
+                                            配置文件: charas.toml
+                                        </span>
+                                    </div>
+                                    {characters.length > 0 ? (
+                                        characters.map((character) => (
                                             <button
-                                                key={voice.name}
-                                                className={`voice-option ${voice.is_current ? 'active' : ''}`}
-                                                onClick={() => handleVoiceSelect(voice.name)}
+                                                key={character.id}
+                                                className={`character-option ${character.is_current ? 'active' : ''}`}
+                                                onClick={() => handleCharacterSelect(character.id)}
                                             >
-                                                <span className="voice-option-name">
-                                                    {voice.name}
+                                                <span className="character-option-name">
+                                                    {character.name}
                                                 </span>
-                                                <span className="voice-option-hint">
-                                                    {voice.prompt_text.substring(0, 20)}...
+                                                <span className="character-option-hint">
+                                                    {character.prompt_text.substring(0, 20)}...
                                                 </span>
-                                                {voice.is_current && (
-                                                    <span className="voice-option-check">✓</span>
+                                                {character.is_current && (
+                                                    <span className="character-option-check">✓</span>
                                                 )}
                                             </button>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-                        )}
+                                        ))
+                                    ) : (
+                                        <div className="character-option-empty">
+                                            未连接到后端服务
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
                     </div>
 
                     {/* Messages Area */}
@@ -279,6 +269,16 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
 
                     {/* Input Area */}
                     <div className="chat-input-area">
+                        {/* Recording Button */}
+                        <button
+                            className={`record-btn ${isListening ? 'recording' : ''} ${isAudioLocked ? 'locked' : ''}`}
+                            onClick={handleVoiceToggle}
+                            disabled={isProcessing || isAudioLocked}
+                            title={isAudioLocked ? '语音播放中...' : (isListening ? '停止录音' : '开始录音')}
+                        >
+                            {isAudioLocked ? '🔇' : (isListening ? '⏺️录音中...' : '🎙录音')}
+                        </button>
+
                         <input
                             ref={inputRef}
                             type="text"
