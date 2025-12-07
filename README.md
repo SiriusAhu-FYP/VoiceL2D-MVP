@@ -131,6 +131,17 @@ prompt_lang = "zh"
     - [x] Basic commands
     - [x] Make LLM understand more complex commands
 
-- [ ] Define more Personas
+- [x] Define more Personas
 - [x] Use `Loguru` for logging
+
 ...
+
+# Current Status
+
+✅ The basic function is working well, so this repository is considered as a completed MVP and its core functionalities development is considered to be stopped, except some low-level modifications like prompt improvement and voice selection.
+
+⚠️ It's not abnormal if you can't reproduce the result, because some services like GPT-Sovits are hosted on my own server which I don't provide a public access to.
+
+# Future Plans
+
+No future plans! It's time to focus on another MVP!

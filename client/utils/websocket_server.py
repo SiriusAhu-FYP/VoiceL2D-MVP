@@ -45,6 +45,7 @@ class AudioWebSocketServer:
 
         # Callbacks for handling incoming messages
         self._on_text_input: Optional[Callable[[str], None]] = None
+        self._on_command: Optional[Callable[[str, dict], None]] = None
         self._on_playback_complete: Optional[Callable[[], None]] = None
 
         # Event for waiting on playback completion
@@ -55,9 +56,18 @@ class AudioWebSocketServer:
         Set callback for text input received from frontend.
 
         Args:
-            callback: Function to call with text input
+            callback: Function to call with text input (plain text string)
         """
         self._on_text_input = callback
+
+    def set_on_command(self, callback: Optional[Callable[[str, dict], None]]) -> None:
+        """
+        Set callback for command messages received from frontend.
+
+        Args:
+            callback: Function to call with (command_name, data_dict)
+        """
+        self._on_command = callback
 
     def set_on_playback_complete(self, callback: Optional[Callable[[], None]]) -> None:
         """
@@ -121,17 +131,19 @@ class AudioWebSocketServer:
                         text = data.get("text", "").strip()
                         if text and self._on_text_input:
                             lg.info(f"[WS] Text: {text[:30]}...")
-                            asyncio.create_task(self._handle_text_input_async(message))
+                            asyncio.create_task(self._handle_text_input_async(text))
 
                     elif msg_type == "command":
                         # Handle command from frontend
-                        if self._on_text_input:
-                            asyncio.create_task(self._handle_text_input_async(message))
+                        command = data.get("command")
+                        if command and self._on_command:
+                            lg.debug(f"[WS] Command: {command}")
+                            asyncio.create_task(
+                                self._handle_command_async(command, data)
+                            )
 
                 except json.JSONDecodeError:
-                    lg.warning(
-                        f"[AudioWebSocketServer] Invalid JSON received: {message}"
-                    )
+                    lg.warning(f"[WS] Invalid JSON received: {message}")
 
         except websockets.exceptions.ConnectionClosed:
             pass
@@ -151,6 +163,20 @@ class AudioWebSocketServer:
             if asyncio.iscoroutine(result):
                 await result
 
+    async def _handle_command_async(self, command: str, data: dict) -> None:
+        """
+        Handle command asynchronously.
+
+        Args:
+            command: Command name
+            data: Full message data dict
+        """
+        if self._on_command:
+            # If callback is a coroutine, await it
+            result = self._on_command(command, data)
+            if asyncio.iscoroutine(result):
+                await result
+
     async def send_audio(self, audio_data: bytes, text: str) -> None:
         """
         Send audio data to all connected clients.
@@ -160,7 +186,7 @@ class AudioWebSocketServer:
             text: The text that was spoken (for display/logging)
         """
         if not self.clients:
-            lg.warning("[AudioWebSocketServer] No clients connected, skipping send")
+            lg.warning("[WS] No clients connected, skipping send")
             return
 
         # Encode audio as base64 for JSON transport
@@ -179,9 +205,7 @@ class AudioWebSocketServer:
         })
 
         await self._broadcast(message)
-        lg.info(
-            f"[AudioWebSocketServer] Sent audio ({len(audio_data)} bytes) for: {text[:30]}..."
-        )
+        lg.info(f"[WS] Sent audio ({len(audio_data)} bytes): {text[:30]}...")
 
         # Wait for clients to acknowledge playback
         # This ensures sequential playback of sentences
@@ -196,7 +220,7 @@ class AudioWebSocketServer:
             source: Message source ('voice' or 'text')
         """
         if not self.clients:
-            lg.warning("[AudioWebSocketServer] No clients connected, skipping send")
+            lg.warning("[WS] No clients connected, skipping send")
             return
 
         message = json.dumps({
@@ -215,7 +239,7 @@ class AudioWebSocketServer:
             text: AI's response text
         """
         if not self.clients:
-            lg.warning("[AudioWebSocketServer] No clients connected, skipping send")
+            lg.warning("[WS] No clients connected, skipping send")
             return
 
         message = json.dumps({
@@ -392,9 +416,7 @@ class AudioWebSocketServer:
             self.host,
             self.port,
         )
-        lg.info(
-            f"[AudioWebSocketServer] Server started on ws://{self.host}:{self.port}"
-        )
+        lg.info(f"[WS] Server started on ws://{self.host}:{self.port}")
 
     async def stop(self) -> None:
         """Stop the WebSocket server."""
@@ -402,7 +424,7 @@ class AudioWebSocketServer:
         if self._server:
             self._server.close()
             await self._server.wait_closed()
-            lg.info("[AudioWebSocketServer] Server stopped")
+            lg.info("[WS] Server stopped")
 
     @property
     def is_running(self) -> bool:
@@ -433,7 +455,7 @@ async def run_standalone_server(host: str = "localhost", port: int = 7789) -> No
 
     await server.start()
 
-    lg.info(f"[AudioWebSocketServer] Running standalone on ws://{host}:{port}")
+    lg.info(f"[WS] Running standalone on ws://{host}:{port}")
     print("Press Ctrl+C to stop")
 
     try:

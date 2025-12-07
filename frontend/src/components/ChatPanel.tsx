@@ -41,6 +41,8 @@ export interface ChatPanelProps {
     onCharacterChange?: (characterId: string) => void;
     /** Whether audio playback is locking the microphone */
     isAudioLocked?: boolean;
+    /** Whether WebSocket is connected to backend */
+    isConnected?: boolean;
 }
 
 export const ChatPanel: React.FC<ChatPanelProps> = ({
@@ -52,6 +54,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     characters = [],
     onCharacterChange,
     isAudioLocked = false,
+    isConnected = true,
 }) => {
     // Use external messages if provided, otherwise use internal state
     const [internalMessages, setInternalMessages] = useState<ChatMessage[]>([]);
@@ -145,7 +148,13 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         <div className={`chat-panel ${isExpanded ? 'expanded' : 'collapsed'}`}>
             {/* Header */}
             <div className="chat-panel-header" onClick={() => setIsExpanded(!isExpanded)}>
-                <span className="chat-panel-title">对话</span>
+                <span className="chat-panel-title">
+                    对话
+                    <span
+                        className={`connection-status ${isConnected ? 'connected' : 'disconnected'}`}
+                        title={isConnected ? '已连接' : '连接断开，正在重连...'}
+                    />
+                </span>
                 <button
                     className="chat-panel-toggle"
                     onClick={(e) => {

@@ -111,6 +111,19 @@ export const Live2DComponent: React.FC = () => {
     const lipSyncHandlerRef = useRef<(() => void) | null>(null);
     const expressionResetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+    // WebSocket reconnection state
+    const wsReconnectAttemptsRef = useRef<number>(0);
+    const wsReconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const [wsConnected, setWsConnected] = useState<boolean>(false);
+
+    // WebSocket reconnection config
+    const WS_RECONNECT_CONFIG = {
+        maxAttempts: 10,
+        baseDelay: 1000,      // 1 second
+        maxDelay: 30000,      // 30 seconds max
+        backoffFactor: 1.5,
+    };
+
     // Expression auto-reset configuration
     const EXPRESSION_RESET_DELAY = 10000; // 10 seconds
 
@@ -379,14 +392,32 @@ export const Live2DComponent: React.FC = () => {
         setChatMessages(prev => [...prev, msg]);
     }, []);
 
+    // Calculate reconnection delay with exponential backoff
+    const getReconnectDelay = useCallback((attempt: number): number => {
+        const delay = Math.min(
+            WS_RECONNECT_CONFIG.baseDelay * Math.pow(WS_RECONNECT_CONFIG.backoffFactor, attempt),
+            WS_RECONNECT_CONFIG.maxDelay
+        );
+        return delay;
+    }, []);
+
     // Setup WebSocket connection for audio
     const setupAudioWebSocket = useCallback(() => {
         if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
+        // Clear any pending reconnect
+        if (wsReconnectTimeoutRef.current) {
+            clearTimeout(wsReconnectTimeoutRef.current);
+            wsReconnectTimeoutRef.current = null;
+        }
+
+        console.log('[WS] Connecting to', AUDIO_WS_URL);
         const ws = new WebSocket(AUDIO_WS_URL);
 
         ws.onopen = () => {
             console.log('[WS] Connected');
+            setWsConnected(true);
+            wsReconnectAttemptsRef.current = 0; // Reset attempts on successful connection
             ws.send(JSON.stringify({ type: 'ready' }));
             // Request characters list on connect/reconnect
             ws.send(JSON.stringify({ type: 'command', command: 'get_characters' }));
@@ -451,14 +482,31 @@ export const Live2DComponent: React.FC = () => {
             }
         };
 
-        ws.onerror = (err) => console.error('[WS] Error:', err);
-        ws.onclose = () => {
+        ws.onerror = (err) => {
+            console.error('[WS] Error:', err);
+        };
+
+        ws.onclose = (event) => {
+            console.log(`[WS] Disconnected (code: ${event.code}, reason: ${event.reason || 'none'})`);
             wsRef.current = null;
-            setTimeout(() => { if (!wsRef.current) setupAudioWebSocket(); }, 5000);
+            setWsConnected(false);
+
+            // Schedule reconnection with exponential backoff
+            const attempts = wsReconnectAttemptsRef.current;
+            if (attempts < WS_RECONNECT_CONFIG.maxAttempts) {
+                const delay = getReconnectDelay(attempts);
+                console.log(`[WS] Reconnecting in ${delay}ms (attempt ${attempts + 1}/${WS_RECONNECT_CONFIG.maxAttempts})`);
+                wsReconnectTimeoutRef.current = setTimeout(() => {
+                    wsReconnectAttemptsRef.current += 1;
+                    setupAudioWebSocket();
+                }, delay);
+            } else {
+                console.error(`[WS] Max reconnection attempts (${WS_RECONNECT_CONFIG.maxAttempts}) reached`);
+            }
         };
 
         wsRef.current = ws;
-    }, [processPlaybackQueue, addChatMessage]);
+    }, [processPlaybackQueue, addChatMessage, getReconnectDelay]);
 
     // Send WebSocket message helper
     const sendWsMessage = useCallback((data: object) => {
@@ -856,6 +904,11 @@ export const Live2DComponent: React.FC = () => {
 
         return () => {
             clearTimeout(timer);
+            // Clear any pending reconnect timeout
+            if (wsReconnectTimeoutRef.current) {
+                clearTimeout(wsReconnectTimeoutRef.current);
+                wsReconnectTimeoutRef.current = null;
+            }
             if (wsRef.current) {
                 wsRef.current.close();
                 wsRef.current = null;
@@ -958,6 +1011,7 @@ export const Live2DComponent: React.FC = () => {
                 characters={characters}
                 onCharacterChange={handleCharacterChange}
                 isAudioLocked={isAudioLocked}
+                isConnected={wsConnected}
             />
             <ActionPanel
                 currentModel={currentModel}

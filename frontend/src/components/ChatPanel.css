@@ -509,6 +509,40 @@
     cursor: not-allowed;
 }
 
+/* Connection Status Indicator */
+.connection-status {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-left: 8px;
+    vertical-align: middle;
+    transition: all 0.3s ease;
+}
+
+.connection-status.connected {
+    background: #22c55e;
+    box-shadow: 0 0 6px rgba(34, 197, 94, 0.6);
+}
+
+.connection-status.disconnected {
+    background: #ef4444;
+    box-shadow: 0 0 6px rgba(239, 68, 68, 0.6);
+    animation: blink-status 1s ease-in-out infinite;
+}
+
+@keyframes blink-status {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.4;
+    }
+}
+
 /* Responsive */
 @media (max-width: 480px) {
     .chat-panel {

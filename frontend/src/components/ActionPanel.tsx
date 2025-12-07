@@ -161,8 +161,8 @@ export const ActionPanel: React.FC<ActionPanelProps> = ({
                                     <div className="action-buttons">
                                         <button
                                             className={`action-button lip-sync-button ${isPlaying ? 'playing' : ''}`}
-                                            onClick={onTestLipSync}
-                                            disabled={isPlaying}
+                                            onClick={() => onTestLipSync?.()}
+                                            disabled={isPlaying || !onTestLipSync}
                                             title={isPlaying ? '正在播放中...' : '点击测试口型同步'}
                                         >
                                             {isPlaying ? (
