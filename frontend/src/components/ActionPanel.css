@@ -241,6 +241,59 @@
     border-color: #4a9eff;
 }
 
+/* Lip Sync Button Styles */
+.lip-sync-section {
+    background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+    padding: 12px;
+    border-radius: 8px;
+    margin-bottom: 16px;
+}
+
+.lip-sync-button {
+    width: 100%;
+    padding: 12px 20px;
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    border: none;
+    border-radius: 8px;
+    color: white;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+}
+
+.lip-sync-button:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+}
+
+.lip-sync-button:disabled {
+    cursor: not-allowed;
+    opacity: 0.8;
+}
+
+.lip-sync-button.playing {
+    background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+    animation: pulse-playing 1.5s ease-in-out infinite;
+}
+
+.lip-sync-icon {
+    font-size: 18px;
+}
+
+@keyframes pulse-playing {
+    0%, 100% {
+        box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.4);
+    }
+    50% {
+        box-shadow: 0 0 0 10px rgba(245, 158, 11, 0);
+    }
+}
+
 .action-panel-loading,
 .action-panel-empty {
     text-align: center;

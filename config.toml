@@ -1,0 +1,30 @@
+[llm]
+base_url = "https://open.bigmodel.cn/api/paas/v4/"
+model = "glm-4-flash"
+
+[asr]
+# SiliconCloud - SenseVoice (free at 2025.12.07)
+api_url = "https://api.siliconflow.cn/v1/audio/transcriptions"
+api_model = "FunAudioLLM/SenseVoiceSmall"
+
+# Local mode settings (Faster-Whisper)
+local_model = "base"  # tiny, base, small, medium, large-v3
+local_language = "zh" # Language code or empty for auto-detect
+
+[mcp]
+server_url = "http://localhost:8848/mcp"
+
+[websocket]
+host = "localhost"
+port = 7789
+
+[vad]
+aggressiveness = 2        # 0-3, higher = more aggressive filtering; default 2
+silence_threshold = 0.8   # seconds of silence to end speech segment; default 0.8
+min_speech_duration = 1.0 # minimum speech duration in seconds to process; default 1.0
+
+[audio]
+sample_rate = 48000     # sample rate; default 48000
+channels = 1            # channels; default 1
+block_size = 1440       # samples per block; default 1440
+lock_buffer_seconds = 2 # extra seconds to add to audio lock duration; default 2

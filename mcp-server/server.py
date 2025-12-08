@@ -1,9 +1,10 @@
 """Lightweight MCP server that proxies Live2D frontend utilities."""
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Literal, Optional
 
 import requests
 from fastmcp import FastMCP
+from loguru import logger as lg
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -14,6 +15,8 @@ frontend_url = "http://localhost:7788"
 
 # Initialize controller at startup
 controller = get_controller(frontend_url)
+
+EmotionType = Literal["angry", "neutral", "happy", "sad", "surprise", "speechless"]
 
 
 class AcceptHeaderFriendlyMiddleware(BaseHTTPMiddleware):
@@ -38,7 +41,7 @@ def _handle_response(response: requests.Response) -> Optional[Dict[str, Any]]:
         response.raise_for_status()
         return response.json()
     except requests.RequestException as exc:
-        print(f"[MCP] Request failed: {exc}")
+        lg.error(f"[MCP] Request failed: {exc}")
         return None
 
 
@@ -47,7 +50,7 @@ def _get(path: str) -> Optional[Dict[str, Any]]:
         response = requests.get(f"{frontend_url}{path}", timeout=5)
         return _handle_response(response)
     except requests.RequestException as exc:
-        print(f"[MCP] GET {path} error: {exc}")
+        lg.error(f"[MCP] GET {path} error: {exc}")
         return None
 
 
@@ -56,162 +59,149 @@ def _post(path: str, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         response = requests.post(f"{frontend_url}{path}", json=payload, timeout=5)
         return _handle_response(response)
     except requests.RequestException as exc:
-        print(f"[MCP] POST {path} error: {exc}")
+        lg.error(f"[MCP] POST {path} error: {exc}")
         return None
 
 
+# @mcp.tool
+# def refresh_data():
+#     """
+#     Fetch the current model state summary.
+
+#     Returns the active model name, total counts of motions/expressions/sounds,
+#     and hints if the frontend server is offline.
+#     """
+#     payload = _get("/api/live2d/state")
+#     if not payload or not payload.get("success"):
+#         return (
+#             "Unable to query the frontend state. Please ensure `pnpm dev` is running."
+#         )
+
+#     data = payload.get("data") or {}
+#     current_model = data.get("currentModel")
+#     actions = data.get("availableActions") or {}
+#     return (
+#         f"Current model: {current_model or 'unknown'} | "
+#         f"motions={len(actions.get('motions') or [])}, "
+#         f"expressions={len(actions.get('expressions') or [])}, "
+#         f"sounds={len(actions.get('sounds') or [])}"
+#     )
+
+
+# @mcp.tool
+# def play_motion(motion_index: int):
+#     """
+#     Ask the frontend to play a specific motion by index.
+
+#     Frontend validation ensures the index is safe and broadcasts the action via
+#     SSE so every connected client stays in sync.
+#     """
+#     if motion_index < 0:
+#         return "Motion index must be a non-negative integer."
+
+#     payload = _post("/api/live2d/motion/index", {"index": motion_index})
+#     if not payload:
+#         return "Failed to contact the frontend."
+#     if not payload.get("success"):
+#         return payload.get("error", "Failed to play the requested motion.")
+
+#     motion = payload.get("data") or {}
+#     return f"Playing motion: {motion.get('group') or motion.get('name')}"
+
+
+# @mcp.tool
+# def play_random_motion():
+#     """
+#     Trigger the frontend's random-motion helper.
+
+#     The frontend guarantees the motion differs from the previous one, performs
+#     validation, and broadcasts the result through SSE.
+#     """
+#     payload = _post("/api/live2d/random/motion", {})
+#     if not payload:
+#         return "Failed to contact the frontend."
+#     if not payload.get("success"):
+#         return payload.get("error", "Random motion failed.")
+
+#     motion = payload.get("data") or {}
+#     return f"Random motion: {motion.get('group') or motion.get('name')}"
+
+
+# @mcp.tool
+# def play_random_expression():
+#     """
+#     Trigger the frontend's random-expression helper.
+
+#     Ensures the selected expression is valid for the current model and avoids
+#     repeating the last expression.
+#     """
+#     payload = _post("/api/live2d/random/expression", {})
+#     if not payload:
+#         return "Failed to contact the frontend."
+#     if not payload.get("success"):
+#         return payload.get("error", "Random expression failed.")
+
+#     expression = payload.get("data") or {}
+#     return f"Random expression: {expression.get('name')}"
+
+
+# @mcp.tool
+# def play_random_sound():
+#     """
+#     Trigger the frontend's random sound helper.
+
+#     Useful for quickly testing available TTS/audio assets.
+#     """
+#     payload = _post("/api/live2d/random/sound", {})
+#     if not payload:
+#         return "Failed to contact the frontend."
+#     if not payload.get("success"):
+#         return payload.get("error", "Random sound failed.")
+
+#     data = payload.get("data") or {}
+#     return f"Random sound: {data.get('sound')}"
+
+
+# @mcp.tool
+# def play_random_combo():
+#     """
+#     Trigger a random motion + expression + sound combo.
+
+#     The frontend enforces uniqueness and returns details about the chosen
+#     resources for logging or debugging.
+#     """
+#     payload = _post("/api/live2d/random/combo", {})
+#     if not payload:
+#         return "Failed to contact the frontend."
+#     if not payload.get("success"):
+#         return payload.get("error", "Random combo failed.")
+
+#     data = payload.get("data") or {}
+#     motion = data.get("motion") or {}
+#     expression = data.get("expression") or {}
+#     sound = data.get("sound")
+#     return (
+#         f"Random combo -> motion: {motion.get('group')}, "
+#         f"expression: {expression.get('name')}, sound: {sound}"
+#     )
+
+
 @mcp.tool
-def refresh_data():
+def play_expression(emotion: EmotionType):
     """
-    Fetch the current model state summary.
+    REQUIRED: Call this tool to synchronize the character's facial expression with the text response.
 
-    Returns the active model name, total counts of motions/expressions/sounds,
-    and hints if the frontend server is offline.
-    """
-    payload = _get("/api/live2d/state")
-    if not payload or not payload.get("success"):
-        return (
-            "Unable to query the frontend state. Please ensure `pnpm dev` is running."
-        )
+    You MUST analyze the emotional tone of your response and select the best match:
 
-    data = payload.get("data") or {}
-    current_model = data.get("currentModel")
-    actions = data.get("availableActions") or {}
-    return (
-        f"Current model: {current_model or 'unknown'} | "
-        f"motions={len(actions.get('motions') or [])}, "
-        f"expressions={len(actions.get('expressions') or [])}, "
-        f"sounds={len(actions.get('sounds') or [])}"
-    )
-
-
-@mcp.tool
-def play_motion(motion_index: int):
-    """
-    Ask the frontend to play a specific motion by index.
-
-    Frontend validation ensures the index is safe and broadcasts the action via
-    SSE so every connected client stays in sync.
-    """
-    if motion_index < 0:
-        return "Motion index must be a non-negative integer."
-
-    payload = _post("/api/live2d/motion/index", {"index": motion_index})
-    if not payload:
-        return "Failed to contact the frontend."
-    if not payload.get("success"):
-        return payload.get("error", "Failed to play the requested motion.")
-
-    motion = payload.get("data") or {}
-    return f"Playing motion: {motion.get('group') or motion.get('name')}"
-
-
-@mcp.tool
-def play_random_motion():
-    """
-    Trigger the frontend's random-motion helper.
-
-    The frontend guarantees the motion differs from the previous one, performs
-    validation, and broadcasts the result through SSE.
-    """
-    payload = _post("/api/live2d/random/motion", {})
-    if not payload:
-        return "Failed to contact the frontend."
-    if not payload.get("success"):
-        return payload.get("error", "Random motion failed.")
-
-    motion = payload.get("data") or {}
-    return f"Random motion: {motion.get('group') or motion.get('name')}"
-
-
-@mcp.tool
-def play_random_expression():
-    """
-    Trigger the frontend's random-expression helper.
-
-    Ensures the selected expression is valid for the current model and avoids
-    repeating the last expression.
-    """
-    payload = _post("/api/live2d/random/expression", {})
-    if not payload:
-        return "Failed to contact the frontend."
-    if not payload.get("success"):
-        return payload.get("error", "Random expression failed.")
-
-    expression = payload.get("data") or {}
-    return f"Random expression: {expression.get('name')}"
-
-
-@mcp.tool
-def play_random_sound():
-    """
-    Trigger the frontend's random sound helper.
-
-    Useful for quickly testing available TTS/audio assets.
-    """
-    payload = _post("/api/live2d/random/sound", {})
-    if not payload:
-        return "Failed to contact the frontend."
-    if not payload.get("success"):
-        return payload.get("error", "Random sound failed.")
-
-    data = payload.get("data") or {}
-    return f"Random sound: {data.get('sound')}"
-
-
-@mcp.tool
-def play_random_combo():
-    """
-    Trigger a random motion + expression + sound combo.
-
-    The frontend enforces uniqueness and returns details about the chosen
-    resources for logging or debugging.
-    """
-    payload = _post("/api/live2d/random/combo", {})
-    if not payload:
-        return "Failed to contact the frontend."
-    if not payload.get("success"):
-        return payload.get("error", "Random combo failed.")
-
-    data = payload.get("data") or {}
-    motion = data.get("motion") or {}
-    expression = data.get("expression") or {}
-    sound = data.get("sound")
-    return (
-        f"Random combo -> motion: {motion.get('group')}, "
-        f"expression: {expression.get('name')}, sound: {sound}"
-    )
-
-
-@mcp.tool
-def play_expression(emotion: str):
-    """
-    Play an expression based on abstract emotion category.
-
-    This tool maps abstract emotions to model-specific expression IDs and plays them.
-    If the current model is not in the mapping, falls back to random expression.
-
-    Supported emotion categories:
-    - "angry": Angry, frustrated, annoyed
-    - "neutral": Calm, peaceful, default state
-    - "happy": Excited, joyful, celebrating
-    - "sad": Sad, regretful, comforting
-    - "surprise": Surprised, shocked, unexpected
-    - "speechless": Speechless, awkward, embarrassed, helpless, sarcastic
-
-    Examples:
-    - play_expression("happy") - Play a happy expression
-    - play_expression("sad") - Play a sad expression
-    - play_expression("speechless") - Play a speechless/awkward expression
-
-    The system automatically:
-    1. Detects the current Live2D model
-    2. Maps the emotion to appropriate expression(s) for that model
-    3. Randomly selects one if multiple options exist
-    4. Falls back to random expression if model is not mapped
+    - "angry": Use when complaining, stomping feet, annoyed, or being teased. (e.g. "Humph!", "So annoying!")
+    - "happy": Use when celebrating, seeing food/treasure, or cheering. (e.g. "Yay!", "Delicious!")
+    - "sad": Use when disappointed, hurt, or sympathetic.
+    - "surprise": Use when shocked, seeing monsters, or unexpected events. (e.g. "Wah?!")
+    - "speechless": Use for awkward silence, sarcasm, or "..." moments. (e.g. "Ugh...", "Really?")
+    - "neutral": Only use when stating dry facts with ZERO emotion.
 
     Args:
-        emotion: One of: neutral, happy, sad, surprise, speechless
+        emotion: One of: angry, happy, sad, surprise, speechless, neutral
 
     Returns:
         Status message indicating success or failure
